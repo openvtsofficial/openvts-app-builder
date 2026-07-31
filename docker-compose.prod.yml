@@ -28,6 +28,7 @@ services:
       LOGGER_ENABLED: "true"
       LOGGER_LEVEL: "info"
       LOG_FILE_PATH: /app/data/logs/app.log
+      DISABLE_EMBEDDED_WORKER: "true"
     volumes:
       - studio-data:/app/data
     networks:
