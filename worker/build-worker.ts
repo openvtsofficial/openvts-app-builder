@@ -91,7 +91,7 @@ async function runCommand(jobId: string, command: string, args: string[], cwd: s
       buffered += chunk.toString("utf8");
       const lines = buffered.split(/\r?\n/);
       buffered = lines.pop() ?? "";
-      for (const line of lines.filter(Boolean).slice(-25)) void appendLog(jobId, line.slice(0, 2_000));
+      for (const line of lines.filter(Boolean).slice(-100)) void appendLog(jobId, line.slice(0, 2_000));
     };
     child.stdout.on("data", consume);
     child.stderr.on("data", consume);
