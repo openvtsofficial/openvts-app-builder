@@ -290,6 +290,17 @@ function BuildProgress({ build, log, onDownload, onClose }: { build: StudioBuild
   const logRef = useRef<HTMLDivElement>(null);
   const [liveLog, setLiveLog] = useState("");
   const [showLog, setShowLog] = useState(true);
+  const [elapsed, setElapsed] = useState(() => {
+    if (!build.createdAt) return 0;
+    return Math.round((Date.now() - new Date(build.createdAt).getTime()) / 1000);
+  });
+
+  useEffect(() => {
+    if (!running || !build.createdAt) return;
+    const start = new Date(build.createdAt).getTime();
+    const timer = setInterval(() => setElapsed(Math.round((Date.now() - start) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [running, build.createdAt]);
 
   useEffect(() => {
     if (DEMO_MODE || done) return;
@@ -309,10 +320,6 @@ function BuildProgress({ build, log, onDownload, onClose }: { build: StudioBuild
   const logLines = DEMO_MODE
     ? log
     : liveLog.split("\n").filter(Boolean).slice(-100);
-
-  const elapsed = build.createdAt
-    ? Math.round((Date.now() - new Date(build.createdAt).getTime()) / 1000)
-    : 0;
 
   return (
     <section className="mt-3 overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--surface-elevated)] shadow-[var(--shadow-card)]">
