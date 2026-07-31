@@ -70,6 +70,11 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.DEVELOPMENT_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
+        
+      - name: Cleanup SSH (Post-job)
+        if: always()
+        run: |
+          rm -f ~/.ssh/id_rsa ~/.ssh/known_hosts
       
       - name: Deploy to development server
         run: |
@@ -79,9 +84,9 @@ jobs:
           # Example deployment commands (customize based on your setup)
           # ssh user@dev-server "
           #   cd /opt/studio
-          #   docker-compose pull
-          #   docker-compose up -d
-          #   docker-compose exec app npx prisma migrate deploy
+          #   docker compose pull
+          #   docker compose up -d
+          #   docker compose exec app npx prisma migrate deploy
           # "
           echo "Development deployment would happen here"
       

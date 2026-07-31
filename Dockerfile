@@ -35,7 +35,7 @@ COPY prisma ./prisma
 RUN npx prisma generate
 
 COPY . .
-RUN npm run build
+RUN npm run setup && npm run build
 
 # ---------- Production stage ----------
 FROM base AS runner

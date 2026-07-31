@@ -72,6 +72,11 @@ jobs:
           echo "${{ secrets.AWS_EC2_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ env.EC2_HOST }} >> ~/.ssh/known_hosts
+        
+      - name: Cleanup SSH (Post-job)
+        if: always()
+        run: |
+          rm -f ~/.ssh/id_rsa ~/.ssh/known_hosts
       
       - name: Deployment Configuration
         run: |
@@ -99,6 +104,15 @@ jobs:
             echo ""
             echo "--- Available Images ---"
             docker images openvts-app-builder --format "table {{.Repository}}\t{{.Tag}}"
+            echo ""
+            echo "--- Saving current image for rollback ---"
+            CURRENT_IMAGE=$(docker ps --filter "name=studio-openvts" --format "{{.Image}}" | head -1)
+            if [ -n "$CURRENT_IMAGE" ]; then
+              echo "Current image: $CURRENT_IMAGE"
+              echo "$CURRENT_IMAGE" > /tmp/previous-image.txt
+            else
+              echo "No running container found"
+            fi
       
       - name: Deploy Application
         uses: appleboy/ssh-action@v0.1.8
@@ -153,19 +167,34 @@ jobs:
             EOF
             
             echo "📦 Pulling new Docker image..."
-            docker-compose -f docker-compose.studio.yml pull
+            docker compose -f docker-compose.studio.yml pull
             
             echo "🔄 Stopping existing container..."
-            docker-compose -f docker-compose.studio.yml down || true
+            docker compose -f docker-compose.studio.yml down || true
             
             echo "🚀 Starting new container..."
-            docker-compose -f docker-compose.studio.yml up -d
+            docker compose -f docker-compose.studio.yml up -d
             
             echo "⏳ Waiting for container to start..."
             sleep 10
             
             echo "🔍 Checking container status..."
             docker ps --filter "name=studio-openvts" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+            
+            # Check if container started successfully
+            if ! docker ps --filter "name=studio-openvts" --filter "status=running" --quiet; then
+              echo "❌ Container failed to start. Attempting rollback..."
+              if [ -f /tmp/previous-image.txt ]; then
+                PREVIOUS_IMAGE=$(cat /tmp/previous-image.txt)
+                echo "Rolling back to previous image: $PREVIOUS_IMAGE"
+                sed -i "s|image:.*|image: $PREVIOUS_IMAGE|" docker-compose.studio.yml
+                docker compose -f docker-compose.studio.yml up -d
+                echo "✅ Rollback completed"
+              else
+                echo "⚠️ No previous image found for rollback"
+              fi
+              exit 1
+            fi
 
       - name: Run Database Migrations
         uses: appleboy/ssh-action@v0.1.8
@@ -177,10 +206,46 @@ jobs:
             echo "🗃️ Running database migrations..."
             cd /opt/studio
             
-            # Run Prisma migrations inside the container
-            docker exec studio-openvts npx prisma migrate deploy || echo "Migrations may have already been applied"
+            # Run Prisma migrations inside the container with retry logic
+            echo "Attempting database migrations..."
+            for i in {1..3}; do
+              if docker exec studio-openvts npx prisma migrate deploy; then
+                echo "✅ Migrations applied successfully"
+                break
+              elif [ $i -eq 3 ]; then
+                echo "⚠️ Migrations failed after 3 attempts. Continuing deployment..."
+                docker exec studio-openvts npx prisma migrate status || echo "Migration status check failed"
+              else
+                echo "⚠️ Migration attempt $i failed, retrying in 5 seconds..."
+                sleep 5
+              fi
+            done
             
             echo "✅ Database migrations completed"
+      
+      - name: Verify Nginx Configuration
+        uses: appleboy/ssh-action@v0.1.8
+        with:
+          host: ${{ env.EC2_HOST }}
+          username: ${{ env.EC2_USER }}
+          key: ${{ secrets.AWS_EC2_SSH_KEY }}
+          script: |
+            echo "🔍 Verifying Nginx configuration..."
+            
+            # Test Nginx configuration
+            sudo nginx -t
+            
+            # Check studio.openvts.io SSL certificate
+            echo ""
+            echo "📋 SSL Certificate Status:"
+            sudo openssl x509 -in /etc/letsencrypt/live/studio.openvts.io/fullchain.pem -noout -dates
+            
+            # Reload Nginx to ensure latest config
+            echo ""
+            echo "🔄 Reloading Nginx..."
+            sudo systemctl reload nginx
+            
+            echo "✅ Nginx configuration verified"
 
   verify-deployment:
     name: Verify Deployment
@@ -189,20 +254,21 @@ jobs:
     environment: production
     
     steps:
-      - name: Health Check - Direct Port Access
+      - name: Health Check - Through Nginx/SSL
         run: |
-          echo "🔍 Checking application health..."
-          # Direct health check to EC2 server
-          HEALTH_URL="http://${{ env.EC2_HOST }}:8082/api/health"
+          echo "🔍 Checking application health through Nginx/SSL..."
+          # Health check through Nginx with SSL
+          HEALTH_URL="https://studio.openvts.io/api/health"
           echo "Testing: $HEALTH_URL"
           
           # Using curl with timeout and retry logic
           for i in {1..10}; do
-            if curl -f -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" | grep -q "200"; then
+            STATUS_CODE=$(curl -f -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" 2>/dev/null || echo "000")
+            if [ "$STATUS_CODE" = "200" ]; then
               echo "✅ Health check passed (attempt $i)"
               exit 0
             else
-              echo "⏳ Health check failed, retrying in 5 seconds (attempt $i/10)..."
+              echo "⏳ Health check failed with status $STATUS_CODE, retrying in 5 seconds (attempt $i/10)..."
               sleep 5
             fi
           done
@@ -213,11 +279,11 @@ jobs:
         run: |
           echo "🧪 Testing application endpoints..."
           
-          # Test basic page load
-          curl -s -o /dev/null -w "Homepage: %{http_code}\n" "http://${{ env.EC2_HOST }}:8082" || true
+          # Test basic page load through domain
+          curl -s -o /dev/null -w "Homepage via domain: %{http_code}\n" "https://studio.openvts.io" || true
           
-          # Test API endpoint
-          curl -s -o /dev/null -w "API Health: %{http_code}\n" "http://${{ env.EC2_HOST }}:8082/api/health" || true
+          # Test API endpoint through domain
+          curl -s -o /dev/null -w "API Health via domain: %{http_code}\n" "https://studio.openvts.io/api/health" || true
           
           echo "✅ Basic endpoint tests completed"
 
@@ -264,9 +330,9 @@ jobs:
           echo "- **Verification:** ${{ needs.verify-deployment.result }}"
           echo ""
           echo "## Application URLs"
-          echo "- **Direct Access:** http://${{ env.EC2_HOST }}:8082"
+          echo "- **Direct Container Access:** http://${{ env.EC2_HOST }}:8082"
           echo "- **Domain Access:** https://studio.openvts.io"
-          echo "- **Health Check:** http://${{ env.EC2_HOST }}:8082/api/health"
+          echo "- **Health Check:** https://studio.openvts.io/api/health"
           echo ""
           echo "## Next Steps"
           echo "1. Verify deployment at https://studio.openvts.io"
@@ -278,7 +344,7 @@ jobs:
           echo "If deployment fails, SSH to server and run:"
           echo "```bash"
           echo "cd /opt/studio"
-          echo "docker-compose -f docker-compose.studio.yml down"
+          echo "docker compose -f docker-compose.studio.yml down"
           echo "# Restore from backup or use previous image"
           echo "```"
       
