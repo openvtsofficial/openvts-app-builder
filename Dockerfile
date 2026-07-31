@@ -35,6 +35,9 @@ COPY prisma ./prisma
 RUN npx prisma generate
 
 COPY . .
+
+ENV NEXT_PUBLIC_DEMO_MODE=false
+
 RUN npm run setup && npm run build
 
 # ---------- Production stage ----------
@@ -59,8 +62,12 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
 
-RUN mkdir -p data/workspaces data/artifacts data/uploads && \
+RUN mkdir -p data/workspaces data/artifacts data/uploads data/logs && \
     chown -R nextjs:nodejs data
+
+RUN chown -R nextjs:nodejs /opt/flutter /opt/android-sdk && \
+    mkdir -p /home/nextjs/.gradle && \
+    chown -R nextjs:nodejs /home/nextjs
 
 USER nextjs
 
