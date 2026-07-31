@@ -1,0 +1,46 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# Next.js
+/.next/
+/out/
+/dist/
+
+# production
+/build
+
+# local data and build artifacts
+/data/uploads/*
+/data/artifacts/*
+/data/workspaces/*
+!/data/uploads/.gitkeep
+!/data/artifacts/.gitkeep
+!/data/workspaces/.gitkeep
+
+# environment and secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+
+# logs and editor files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+*.pem
+*.tsbuildinfo
+.idea
+.vscode
+
+# extracted Flutter template (regenerated from base-code.zip via npm run setup)
+/templates/flutter_base
+
+# generated Prisma client
+/src/generated/prisma

@@ -1,0 +1,214 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ProjectStatus {
+  DRAFT
+  READY
+  BUILDING
+  FAILED
+  ARCHIVED
+}
+
+enum AssetKind {
+  LOGO_LIGHT
+  LOGO_DARK
+  ICON_KITCHEN_ARCHIVE
+  ICON_PREVIEW
+  SIGNING_KEYSTORE
+  PROVISIONING_PROFILE
+  OTHER
+}
+
+enum BuildType {
+  DEBUG_APK
+  RELEASE_APK
+  SIGNED_APK
+  RELEASE_AAB
+  SOURCE_ZIP
+}
+
+enum BuildStatus {
+  QUEUED
+  PREPARING
+  CUSTOMIZING
+  RESOLVING_DEPENDENCIES
+  COMPILING
+  SIGNING
+  UPLOADING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  accounts      Account[]
+  sessions      Session[]
+  projects      Project[]
+  builds        BuildJob[]
+  auditLogs     AuditLog[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Project {
+  id                   String        @id @default(cuid())
+  ownerId              String
+  name                 String
+  slug                 String
+  description          String?
+  androidApplicationName String
+  iosApplicationName   String
+  androidPackageName   String        @unique
+  iosBundleId          String        @unique
+  accentColor          String        @default("#111111")
+  logoLightKey         String?
+  logoDarkKey          String?
+  iconArchiveKey       String?
+  iconPreviewKey       String?
+  iconManifest         Json?
+  configuration        Json          @default("{}")
+  templateVersion      String        @default("1.0.0")
+  configurationRevision Int          @default(1)
+  status               ProjectStatus @default(DRAFT)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  owner                User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  assets               Asset[]
+  builds               BuildJob[]
+  auditLogs            AuditLog[]
+  signingProfile       SigningProfile?
+
+  @@unique([ownerId, slug])
+  @@index([ownerId, updatedAt])
+  @@index([status])
+}
+
+model Asset {
+  id           String    @id @default(cuid())
+  projectId    String
+  kind         AssetKind
+  originalName String
+  storageKey   String    @unique
+  mimeType     String
+  sizeBytes    Int
+  checksum     String
+  metadata     Json?
+  createdAt    DateTime  @default(now())
+  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  signingProfile SigningProfile?
+
+  @@index([projectId, kind])
+}
+
+model SigningProfile {
+  id                     String   @id @default(cuid())
+  projectId              String   @unique
+  name                   String
+  keystoreAssetId        String   @unique
+  keyAlias               String
+  encryptedStorePassword String   @db.Text
+  encryptedKeyPassword   String   @db.Text
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  project                Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  keystoreAsset          Asset    @relation(fields: [keystoreAssetId], references: [id], onDelete: Cascade)
+}
+
+model BuildJob {
+  id            String      @id @default(cuid())
+  projectId     String
+  requestedById String
+  type          BuildType
+  projectRevision Int
+  status        BuildStatus @default(QUEUED)
+  progress      Int         @default(0)
+  currentStage  String      @default("Queued")
+  etaSeconds    Int?
+  priority      Int         @default(100)
+  attempts      Int         @default(0)
+  maxAttempts   Int         @default(2)
+  lockedAt      DateTime?
+  lockedBy      String?
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  errorMessage  String?     @db.Text
+  buildLog      String?     @db.Text
+  artifactKey   String?
+  artifactSize  Int?
+  checksum      String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  project       Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requestedBy   User        @relation(fields: [requestedById], references: [id], onDelete: Cascade)
+
+  @@index([status, priority, createdAt])
+  @@index([projectId, createdAt])
+  @@index([projectId, type, status, projectRevision])
+  @@index([requestedById, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String
+  projectId  String?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  actor      User     @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  project    Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([projectId, createdAt])
+}
