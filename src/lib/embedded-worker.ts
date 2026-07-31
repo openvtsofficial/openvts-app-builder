@@ -1,5 +1,8 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("embedded-worker");
 
 let started = false;
 
@@ -24,21 +27,21 @@ export function startEmbeddedWorker() {
 
   child.stdout?.on("data", (chunk: Buffer) => {
     for (const line of chunk.toString().split(/\r?\n/).filter(Boolean)) {
-      console.log(`[worker] ${line}`);
+      log.info(line);
     }
   });
 
   child.stderr?.on("data", (chunk: Buffer) => {
     for (const line of chunk.toString().split(/\r?\n/).filter(Boolean)) {
-      console.error(`[worker] ${line}`);
+      log.error(line);
     }
   });
 
   child.on("exit", (code) => {
-    console.log(`[worker] Process exited with code ${code}, restarting in 5s...`);
+    log.warn(`Process exited with code ${code}, restarting in 5s...`);
     started = false;
     setTimeout(startEmbeddedWorker, 5000);
   });
 
-  console.log(`[worker] Build worker started (PID ${child.pid})`);
+  log.info(`Build worker started (PID ${child.pid})`);
 }
