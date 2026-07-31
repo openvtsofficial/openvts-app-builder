@@ -1,0 +1,116 @@
+name: PR Validation
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master, development]
+
+jobs:
+  lint:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run ESLint
+        run: npm run lint
+      
+      - name: TypeScript type checking
+        run: npm run typecheck
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run tests
+        run: npm test
+
+  build:
+    name: Build Validation
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Generate Prisma client
+        run: npx prisma generate
+      
+      - name: Build Next.js application
+        run: npm run build
+      
+      - name: Verify standalone directory
+        run: |
+          if [ -d ".next/standalone" ]; then
+            echo "Standalone build directory created successfully"
+            ls -la .next/standalone/
+          else
+            echo "Standalone build directory not found"
+            exit 1
+          fi
+
+  docker-build:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: openvts-app-builder:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Verify Docker image
+        run: |
+          docker images | grep openvts-app-builder
+          docker run --rm openvts-app-builder:test node --version
+
+  pr-checks:
+    name: PR Status Check
+    runs-on: ubuntu-latest
+    needs: [lint, test, build, docker-build]
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Report success
+        run: echo "All PR validation checks passed ✓"
