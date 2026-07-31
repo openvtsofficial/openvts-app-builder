@@ -104,7 +104,7 @@ async function runCommand(jobId: string, command: string, args: string[], cwd: s
 
     const heartbeatInterval = setInterval(() => {
       const silentFor = Date.now() - lastActivity;
-      if (silentFor > 300000) {
+      if (silentFor > 600000) {
         clearInterval(heartbeatInterval);
         clearTimeout(timer);
         if (!settled) {
@@ -228,7 +228,7 @@ async function buildArtifact(job: BuildJob) {
         : job.type === "DEBUG_APK"
         ? ["build", "apk", "--debug"]
         : ["build", "apk", "--release"];
-      await runCommandWithRetry(job.id, env.FLUTTER_BIN, command, workspace);
+      await runCommand(job.id, env.FLUTTER_BIN, command, workspace);
 
       const outputRoot = path.join(workspace, "build", "app", "outputs");
       artifactPath = (await findFirst(outputRoot, (name) =>
