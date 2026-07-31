@@ -38,7 +38,10 @@ COPY . .
 
 ENV NEXT_PUBLIC_DEMO_MODE=false
 
-RUN npm run setup && npm run build
+RUN npm run setup && \
+    sed -i '/org.gradle.java.home/d' templates/flutter_base/android/gradle.properties && \
+    sed -i 's/-Xmx[0-9]*G/-Xmx2G/; s/MaxMetaspaceSize=[0-9]*G/MaxMetaspaceSize=1G/; s/ReservedCodeCacheSize=[0-9]*m/ReservedCodeCacheSize=256m/' templates/flutter_base/android/gradle.properties && \
+    npm run build
 
 # ---------- Production stage ----------
 FROM base AS runner
