@@ -12,8 +12,8 @@ export function ThemeToggle() {
 
   return (
     <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle color theme">
-      <Moon className="theme-light-icon size-4" />
-      <Sun className="theme-dark-icon size-4" />
+      <Moon className="theme-light-icon size-3.5" />
+      <Sun className="theme-dark-icon size-3.5" />
     </Button>
   );
 }

@@ -11,13 +11,13 @@ interface FieldShellProps {
 
 export function FieldShell({ label, hint, error, optional, children }: FieldShellProps) {
   return (
-    <label className="grid gap-2">
-      <span className="flex items-center justify-between gap-3 text-[12px] font-semibold text-[var(--foreground)]">
+    <label className="grid gap-1.5">
+      <span className="flex items-center justify-between gap-2 text-[11px] font-semibold text-[var(--foreground)]">
         {label}
         {optional ? <span className="font-normal text-[var(--subtle)]">Optional</span> : null}
       </span>
       {children}
-      {error ? <span className="text-[11px] text-[var(--danger)]">{error}</span> : hint ? <span className="text-[11px] leading-4 text-[var(--muted)]">{hint}</span> : null}
+      {error ? <span className="text-[10px] text-[var(--danger)]">{error}</span> : hint ? <span className="text-[10px] leading-4 text-[var(--muted)]">{hint}</span> : null}
     </label>
   );
 }
@@ -26,7 +26,7 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
   return (
     <input
       className={cn(
-        "h-10 w-full rounded-[10px] border border-[var(--line)] bg-[var(--surface)] px-3 text-[13px] text-[var(--foreground)] shadow-[0_1px_1px_rgb(0_0_0/2%)] transition placeholder:text-[var(--subtle)] hover:border-[var(--line-strong)] focus:border-[var(--foreground)] focus:outline-none",
+        "h-8 w-full rounded-md border border-[var(--line)] bg-[var(--surface)] px-2.5 text-[12px] text-[var(--foreground)] transition placeholder:text-[var(--subtle)] hover:border-[var(--line-strong)] focus:border-[var(--foreground)] focus:outline-none",
         className,
       )}
       {...props}
@@ -38,7 +38,7 @@ export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTex
   return (
     <textarea
       className={cn(
-        "min-h-24 w-full resize-none rounded-[10px] border border-[var(--line)] bg-[var(--surface)] px-3 py-2.5 text-[13px] leading-5 text-[var(--foreground)] placeholder:text-[var(--subtle)] hover:border-[var(--line-strong)] focus:border-[var(--foreground)] focus:outline-none",
+        "min-h-20 w-full resize-none rounded-md border border-[var(--line)] bg-[var(--surface)] px-2.5 py-2 text-[12px] leading-5 text-[var(--foreground)] placeholder:text-[var(--subtle)] hover:border-[var(--line-strong)] focus:border-[var(--foreground)] focus:outline-none",
         className,
       )}
       {...props}

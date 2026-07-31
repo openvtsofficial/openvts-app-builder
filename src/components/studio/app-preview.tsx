@@ -23,19 +23,19 @@ export function AppPreview({ project, platform, appearance, onPlatformChange, on
   const inputBorder = dark ? "#3a3a3a" : "#e8e8e8";
 
   return (
-    <div className="flex min-h-[660px] flex-col rounded-[22px] border border-[var(--line)] bg-[var(--surface)] p-4 shadow-[var(--shadow-card)] sm:p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] pb-4">
-        <div><p className="text-[10px] font-bold uppercase tracking-[.14em] text-[var(--subtle)]">Live application preview</p><p className="mt-1 text-[11px] text-[var(--muted)]">Brand changes update instantly.</p></div>
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-[10px] bg-[var(--accent-soft)] p-1">{(["android", "ios"] as const).map((value) => <button key={value} onClick={() => onPlatformChange(value)} className={cn("h-7 rounded-[7px] px-3 text-[9px] font-bold capitalize transition", platform === value ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]")}>{value}</button>)}</div>
-          <div className="flex rounded-[10px] bg-[var(--accent-soft)] p-1">{(["light", "dark"] as const).map((value) => <button key={value} onClick={() => onAppearanceChange(value)} className={cn("h-7 rounded-[7px] px-3 text-[9px] font-bold capitalize transition", appearance === value ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]")}>{value}</button>)}</div>
+    <div className="flex min-h-[540px] flex-col rounded-xl border border-[var(--line)] bg-[var(--surface)] p-3 shadow-[var(--shadow-card)] sm:p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] pb-3">
+        <div><p className="text-[9px] font-bold uppercase tracking-[.12em] text-[var(--subtle)]">Live preview</p><p className="mt-0.5 text-[9px] text-[var(--muted)]">Brand changes update instantly.</p></div>
+        <div className="flex items-center gap-1.5">
+          <div className="flex rounded-md bg-[var(--accent-soft)] p-0.5">{(["android", "ios"] as const).map((value) => <button key={value} onClick={() => onPlatformChange(value)} className={cn("h-6 rounded-[5px] px-2.5 text-[9px] font-bold capitalize transition", platform === value ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]")}>{value}</button>)}</div>
+          <div className="flex rounded-md bg-[var(--accent-soft)] p-0.5">{(["light", "dark"] as const).map((value) => <button key={value} onClick={() => onAppearanceChange(value)} className={cn("h-6 rounded-[5px] px-2.5 text-[9px] font-bold capitalize transition", appearance === value ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]")}>{value}</button>)}</div>
         </div>
       </div>
 
-      <div className="quiet-grid relative mt-4 flex flex-1 items-center justify-center overflow-hidden rounded-[18px] border border-[var(--line)] bg-[var(--background)] px-4 py-8">
+      <div className="quiet-grid relative mt-3 flex flex-1 items-center justify-center overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--background)] px-3 py-5">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,color-mix(in_srgb,var(--surface)_95%,transparent),transparent_20rem)]" />
-        <div className={cn("relative w-[292px] border-[7px] border-[#171816] bg-[#171816] p-[3px] shadow-[0_30px_70px_rgb(0_0_0/28%)]", platform === "ios" ? "rounded-[43px]" : "rounded-[31px]")}>
-          <div className={cn("relative h-[590px] overflow-hidden", platform === "ios" ? "rounded-[33px]" : "rounded-[21px]")} style={{ background: bg, color: fg }}>
+        <div className={cn("relative w-[260px] border-[6px] border-[#171816] bg-[#171816] p-[2px] shadow-[0_24px_50px_rgb(0_0_0/24%)]", platform === "ios" ? "rounded-[38px]" : "rounded-[27px]")}>
+          <div className={cn("relative h-[520px] overflow-hidden", platform === "ios" ? "rounded-[30px]" : "rounded-[19px]")} style={{ background: bg, color: fg }}>
             {/* Status bar */}
             <div className="flex h-7 items-center justify-between px-4 text-[7px] font-bold" style={{ background: "transparent" }}>
               <span>11:05</span>
@@ -121,7 +121,7 @@ export function AppPreview({ project, platform, appearance, onPlatformChange, on
           </div>
         </div>
       </div>
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-[9px] text-[var(--muted)]"><span>{platform === "android" ? "Pixel 9 · Android 16" : "iPhone 16 · iOS 19"}</span><code className="rounded-md bg-[var(--accent-soft)] px-2 py-1 font-mono">{platform === "android" ? project.androidPackageName : project.iosBundleId}</code></div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[8px] text-[var(--muted)]"><span>{platform === "android" ? "Pixel 9 · Android 16" : "iPhone 16 · iOS 19"}</span><code className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 font-mono">{platform === "android" ? project.androidPackageName : project.iosBundleId}</code></div>
     </div>
   );
 }

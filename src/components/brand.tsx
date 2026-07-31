@@ -11,7 +11,7 @@ export function BrandMark({ className }: { className?: string }) {
 export function Wordmark({ compact = false }: { compact?: boolean }) {
   return (
     <span className="flex items-center" aria-label="Open VTS">
-      {compact ? <BrandMark /> : <img src="/open-vts-logo.png" alt="Open VTS" className="openvts-logo h-[34px] w-auto" />}
+      {compact ? <BrandMark /> : <img src="/open-vts-logo.png" alt="Open VTS" className="openvts-logo h-[26px] w-auto" />}
     </span>
   );
 }

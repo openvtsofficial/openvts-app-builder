@@ -1,4 +1,11 @@
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+
+try {
+  await access("sites-preview");
+} catch {
+  console.log("sites-preview/ not found — skipping sites-preview build.");
+  process.exit(0);
+}
 
 await rm("dist", { recursive: true, force: true });
 await mkdir("dist/server", { recursive: true });

@@ -14,13 +14,13 @@ export function LogoUpload({ label, description, value, onChange }: { label: str
     reader.readAsDataURL(file);
   };
   return (
-    <div className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-3">
-      <div className="flex items-center gap-3">
-        <button type="button" onClick={() => input.current?.click()} className={cn("grid size-12 shrink-0 place-items-center overflow-hidden rounded-[11px] border border-dashed border-[var(--line-strong)] bg-[var(--background)]", value && "border-solid")}>
-          {value ? <img src={value} alt="" className="max-h-9 max-w-9 object-contain" /> : <ImageIcon className="size-4 text-[var(--subtle)]" />}
+    <div className="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-2.5">
+      <div className="flex items-center gap-2.5">
+        <button type="button" onClick={() => input.current?.click()} className={cn("grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg border border-dashed border-[var(--line-strong)] bg-[var(--background)]", value && "border-solid")}>
+          {value ? <img src={value} alt="" className="max-h-7 max-w-7 object-contain" /> : <ImageIcon className="size-3.5 text-[var(--subtle)]" />}
         </button>
-        <div className="min-w-0 flex-1"><p className="text-[11px] font-bold">{label}</p><p className="mt-0.5 text-[9px] leading-4 text-[var(--muted)]">{description}</p></div>
-        {value ? <button type="button" onClick={() => onChange(undefined)} className="grid size-7 place-items-center rounded-lg text-[var(--subtle)] hover:bg-[var(--accent-soft)]"><X className="size-3" /></button> : <button type="button" onClick={() => input.current?.click()} className="text-[9px] font-bold underline underline-offset-4">Upload</button>}
+        <div className="min-w-0 flex-1"><p className="text-[10px] font-bold">{label}</p><p className="mt-0.5 text-[9px] leading-3 text-[var(--muted)]">{description}</p></div>
+        {value ? <button type="button" onClick={() => onChange(undefined)} className="grid size-6 place-items-center rounded-md text-[var(--subtle)] hover:bg-[var(--accent-soft)]"><X className="size-3" /></button> : <button type="button" onClick={() => input.current?.click()} className="text-[9px] font-bold underline underline-offset-3">Upload</button>}
       </div>
       <input ref={input} type="file" accept="image/png,image/svg+xml,image/webp,image/jpeg" className="hidden" onChange={(event) => select(event.target.files?.[0])} />
     </div>
@@ -40,15 +40,15 @@ export function IconArchiveUpload({ valid, name, details, previewUrl, busy, onZi
   const zipInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   return (
-    <div className={cn("rounded-xl border border-dashed p-4 transition", valid ? "border-[var(--success)] bg-[var(--success-soft)]" : "border-[var(--line-strong)] bg-[var(--surface)] hover:border-[var(--foreground)]")}>
+    <div className={cn("rounded-lg border border-dashed p-3 transition", valid ? "border-[var(--success)] bg-[var(--success-soft)]" : "border-[var(--line-strong)] bg-[var(--surface)] hover:border-[var(--foreground)]")}>
       {name ? (
-        <div className="flex items-center gap-3">
-          <span className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-[var(--surface)] shadow-sm">{previewUrl ? <img src={previewUrl} alt="Icon preview" className="size-full object-cover" /> : <FileArchive className="size-4" />}</span>
-          <span className="min-w-0 flex-1"><span className="flex items-center gap-2 text-[11px] font-bold"><span className="truncate">{name}</span>{valid ? <Check className="size-3 text-[var(--success)]" /> : null}</span><span className="mt-1 block text-[9px] leading-4 text-[var(--muted)]">{details}</span></span>
-          <button type="button" onClick={onRemove} className="grid size-7 place-items-center rounded-lg hover:bg-[color-mix(in_srgb,var(--foreground)_8%,transparent)]"><X className="size-3" /></button>
+        <div className="flex items-center gap-2.5">
+          <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-[var(--surface)] shadow-sm">{previewUrl ? <img src={previewUrl} alt="Icon preview" className="size-full object-cover" /> : <FileArchive className="size-3.5" />}</span>
+          <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5 text-[10px] font-bold"><span className="truncate">{name}</span>{valid ? <Check className="size-3 text-[var(--success)]" /> : null}</span><span className="mt-0.5 block text-[9px] leading-3 text-[var(--muted)]">{details}</span></span>
+          <button type="button" onClick={onRemove} className="grid size-6 place-items-center rounded-md hover:bg-[color-mix(in_srgb,var(--foreground)_8%,transparent)]"><X className="size-3" /></button>
         </div>
       ) : (
-        <div className="py-3 text-center"><span className="mx-auto grid size-10 place-items-center rounded-xl bg-[var(--accent-soft)]"><UploadCloud className={cn("size-4", busy && "animate-pulse")} /></span><p className="mt-3 text-[11px] font-bold">Upload Icon Kitchen output</p><p className="mx-auto mt-1 max-w-xs text-[9px] leading-4 text-[var(--muted)]">Upload the downloaded ZIP or choose the extracted folder. Android and iOS manifests are checked automatically.</p><div className="mt-4 flex justify-center gap-2"><button type="button" onClick={() => zipInput.current?.click()} className="rounded-lg bg-[var(--foreground)] px-3 py-2 text-[9px] font-bold text-[var(--background)]">Choose ZIP</button><button type="button" onClick={() => folderInput.current?.click()} className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-[9px] font-bold">Choose folder</button></div></div>
+        <div className="py-2 text-center"><span className="mx-auto grid size-8 place-items-center rounded-lg bg-[var(--accent-soft)]"><UploadCloud className={cn("size-3.5", busy && "animate-pulse")} /></span><p className="mt-2 text-[10px] font-bold">Upload Icon Kitchen output</p><p className="mx-auto mt-1 max-w-xs text-[9px] leading-3 text-[var(--muted)]">Upload the ZIP or choose the extracted folder.</p><div className="mt-3 flex justify-center gap-2"><button type="button" onClick={() => zipInput.current?.click()} className="rounded-md bg-[var(--foreground)] px-2.5 py-1.5 text-[9px] font-bold text-[var(--background)]">Choose ZIP</button><button type="button" onClick={() => folderInput.current?.click()} className="rounded-md border border-[var(--line)] bg-[var(--surface)] px-2.5 py-1.5 text-[9px] font-bold">Choose folder</button></div></div>
       )}
       <input ref={zipInput} type="file" accept=".zip,application/zip" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) onZip(file); }} />
       <input ref={(node) => { folderInput.current = node; if (node) { node.setAttribute("webkitdirectory", ""); node.setAttribute("directory", ""); } }} type="file" multiple className="hidden" onChange={(event) => { if (event.target.files?.length) onFolder(event.target.files); }} />

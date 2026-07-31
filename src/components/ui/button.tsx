@@ -19,10 +19,10 @@ export function Button({ className, variant = "primary", size = "md", loading, d
     danger: "border-transparent bg-[var(--danger)] text-white hover:opacity-88",
   };
   const sizes: Record<ButtonSize, string> = {
-    sm: "h-8 gap-1.5 rounded-lg px-3 text-xs",
-    md: "h-10 gap-2 rounded-[10px] px-4 text-[13px]",
-    lg: "h-12 gap-2 rounded-xl px-5 text-sm",
-    icon: "size-10 rounded-[10px] p-0",
+    sm: "h-7 gap-1.5 rounded-md px-2.5 text-[11px]",
+    md: "h-8 gap-1.5 rounded-lg px-3 text-[12px]",
+    lg: "h-9 gap-2 rounded-lg px-4 text-[12px]",
+    icon: "size-8 rounded-lg p-0",
   };
 
   return (

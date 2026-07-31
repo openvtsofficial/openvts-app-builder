@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "dev:all": "next dev & tsx worker/build-worker.ts",
+    "dev": "next dev -p 8082",
+    "dev:all": "next dev -p 8082 & tsx worker/build-worker.ts",
     "build": "prisma generate && next build && node scripts/build-sites-preview.mjs",
-    "start": "next start",
+    "start": "next start -p 8082",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit --pretty false",
     "test": "node --import=tsx --test tests/**/*.test.ts",

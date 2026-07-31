@@ -257,7 +257,8 @@ export async function materializeFlutterProject({ project, templateRoot, outputR
   await cp(templateRoot, outputRoot, { recursive: true, force: true });
 
   // Remove build/ directory if it was included in the template
-  await rm(path.join(outputRoot, "build"), { recursive: true, force: true });
+  const buildDir = [outputRoot, "build"].join(path.sep);
+  await rm(buildDir, { recursive: true, force: true });
 
   // Step 2: Replace hardcoded values with user's configuration
   await replaceInTextFiles(outputRoot, project);
