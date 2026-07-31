@@ -87,24 +87,58 @@ async function runCommand(jobId: string, command: string, args: string[], cwd: s
     const child = spawn(command, args, { cwd, env: buildSpawnEnv(), stdio: ["ignore", "pipe", "pipe"], shell: true });
     let settled = false;
     let buffered = "";
+    let lastActivity = Date.now();
+
     const consume = (chunk: Buffer) => {
+      lastActivity = Date.now();
       buffered += chunk.toString("utf8");
       const lines = buffered.split(/\r?\n/);
       buffered = lines.pop() ?? "";
       for (const line of lines.filter(Boolean).slice(-100)) void appendLog(jobId, line.slice(0, 2_000));
     };
+
     child.stdout.on("data", consume);
     child.stderr.on("data", consume);
+
     const timer = setTimeout(() => { if (!settled) { child.kill("SIGKILL"); reject(new Error(`Command exceeded ${Math.round(timeout / 1000)} seconds`)); } }, timeout);
-    child.on("error", (error) => { if (settled) return; settled = true; clearTimeout(timer); reject(error); });
+
+    const heartbeatInterval = setInterval(() => {
+      const silentFor = Date.now() - lastActivity;
+      if (silentFor > 300000) {
+        clearInterval(heartbeatInterval);
+        clearTimeout(timer);
+        if (!settled) {
+          settled = true;
+          child.kill("SIGKILL");
+          reject(new Error(`Build hung - no output for ${Math.round(silentFor / 1000)}s`));
+        }
+      }
+    }, 60000);
+
+    child.on("error", (error) => { if (settled) return; settled = true; clearTimeout(timer); clearInterval(heartbeatInterval); reject(error); });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(heartbeatInterval);
       if (buffered.trim()) void appendLog(jobId, buffered.trim().slice(0, 2_000));
       if (code === 0) resolve(); else reject(new Error(`${command} exited with code ${code}`));
     });
   });
+}
+
+async function runCommandWithRetry(jobId: string, command: string, args: string[], cwd: string, retries = 2, individualTimeout = 300000) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      await runCommand(jobId, command, args, cwd, individualTimeout);
+      return;
+    } catch (error) {
+      await appendLog(jobId, `Attempt ${attempt}/${retries} failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (attempt === retries) throw error;
+      await appendLog(jobId, `Retrying in 5 seconds...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+  }
 }
 
 async function findFirst(root: string, predicate: (name: string) => boolean): Promise<string | undefined> {
@@ -194,7 +228,7 @@ async function buildArtifact(job: BuildJob) {
         : job.type === "DEBUG_APK"
         ? ["build", "apk", "--debug"]
         : ["build", "apk", "--release"];
-      await runCommand(job.id, env.FLUTTER_BIN, command, workspace);
+      await runCommandWithRetry(job.id, env.FLUTTER_BIN, command, workspace);
 
       const outputRoot = path.join(workspace, "build", "app", "outputs");
       artifactPath = (await findFirst(outputRoot, (name) =>
