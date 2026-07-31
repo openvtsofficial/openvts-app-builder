@@ -7,8 +7,8 @@ server {
 server {
     listen 443 ssl;
     server_name studio.openvts.io;
-    ssl_certificate /etc/letsencrypt/live/agent.openvts.io/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/agent.openvts.io/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/studio.openvts.io/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/studio.openvts.io/privkey.pem;
 
     client_max_body_size 50m;
 

@@ -48,7 +48,7 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+    adduser --system --uid 1001 --home /home/nextjs nextjs
 
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
@@ -61,12 +61,13 @@ COPY --from=builder /app/src/generated ./src/generated
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
+COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 
 RUN mkdir -p data/workspaces data/artifacts data/uploads data/logs && \
     chown -R nextjs:nodejs data
 
 RUN chown -R nextjs:nodejs /opt/flutter /opt/android-sdk && \
-    mkdir -p /home/nextjs/.gradle && \
+    mkdir -p /home/nextjs/.gradle /home/nextjs/.config/flutter /home/nextjs/.cache && \
     chown -R nextjs:nodejs /home/nextjs
 
 USER nextjs
@@ -75,6 +76,7 @@ EXPOSE 3000
 
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+ENV HOME=/home/nextjs
 ENV FLUTTER_BIN=/opt/flutter/bin/flutter
 
 CMD ["node", "server.js"]
