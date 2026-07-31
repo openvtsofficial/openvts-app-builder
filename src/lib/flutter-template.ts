@@ -8,6 +8,8 @@ import { androidPackageRegex, iosBundleRegex } from "@/lib/validation";
 
 const BASE_PACKAGE = "com.openvts.app";
 const BASE_APP_LABEL = "Open VTS";
+const BASE_APP_NAME = "OpenVTS";
+const BASE_API_URL = "https://app.openvts.io/api";
 const BASE_PUBSPEC_NAME = "open_vts";
 
 const textExtensions = new Set([".dart", ".yaml", ".yml", ".xml", ".plist", ".kt", ".kts", ".gradle", ".json", ".html", ".md", ".pbxproj", ".xcconfig", ".properties", ".arb"]);
@@ -37,6 +39,7 @@ async function walk(root: string): Promise<string[]> {
 
 async function replaceInTextFiles(root: string, project: StudioProject) {
   const newPubspecName = pubspecName(project.androidPackageName);
+  const userAppName = project.androidApplicationName;
 
   for (const file of await walk(root)) {
     const ext = path.extname(file);
@@ -98,6 +101,13 @@ async function replaceInTextFiles(root: string, project: StudioProject) {
         `$1#FF${hex}$2`
       );
     }
+
+    // Replace API base URL in config and .env files
+    contents = contents.replaceAll(BASE_API_URL, project.apiBaseUrl);
+
+    // Replace application name references ("OpenVTS" and "Open VTS") with user's app name
+    contents = contents.replaceAll(BASE_APP_NAME, userAppName);
+    contents = contents.replaceAll(BASE_APP_LABEL, userAppName);
 
     if (contents !== original) {
       await writeFile(file, contents, "utf8");
@@ -264,10 +274,9 @@ export async function materializeFlutterProject({ project, templateRoot, outputR
   // Step 6: Configure signing in build.gradle.kts if key.properties will be present
   await configureSigningBuildGradle(outputRoot);
 
-  // Step 7: Create .env file (required by flutter_dotenv asset declaration in pubspec)
+  // Step 7: Create .env file with the configured API base URL
   const envPath = path.join(outputRoot, ".env");
-  const envExists = await stat(envPath).then(() => true).catch(() => false);
-  if (!envExists) await writeFile(envPath, "# Runtime environment\n", "utf8");
+  await writeFile(envPath, `# Runtime environment\nAPI_BASE_URL=${project.apiBaseUrl}\n`, "utf8");
 
   // Step 8: Write manifest for traceability
   await writeFile(path.join(outputRoot, "studio-manifest.json"), JSON.stringify({
@@ -280,6 +289,7 @@ export async function materializeFlutterProject({ project, templateRoot, outputR
       iosApplicationName: project.iosApplicationName,
       androidPackageName: project.androidPackageName,
       iosBundleId: project.iosBundleId,
+      apiBaseUrl: project.apiBaseUrl,
       accentColor: project.accentColor,
     },
     iconAssetsInstalled: icons.installed,

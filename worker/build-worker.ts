@@ -10,7 +10,6 @@ import { prisma } from "../src/lib/db";
 import { env } from "../src/lib/env";
 import { materializeFlutterProject, zipDirectory } from "../src/lib/flutter-template";
 import { toStudioProject } from "../src/lib/project-mapper";
-import { decryptSecret } from "../src/lib/secrets";
 import { storage } from "../src/lib/storage";
 
 const workerId = `${hostname()}-${process.pid}`;
@@ -120,15 +119,15 @@ async function findFirst(root: string, predicate: (name: string) => boolean): Pr
 
 function propertyEscape(value: string) { return value.replaceAll("\\", "\\\\").replaceAll(":", "\\:").replaceAll("=", "\\="); }
 
-async function configureSigning(workspace: string, projectId: string) {
-  const profile = await prisma.signingProfile.findUnique({ where: { projectId }, include: { keystoreAsset: true } });
-  if (!profile) return false;
+async function configureSigning(workspace: string) {
+  const keystoreSrc = path.join(workspace, "assets", "application-key.jks");
+  if (!existsSync(keystoreSrc)) return false;
   const destination = path.join(workspace, "android", "app", "release-key.jks");
-  await writeFile(destination, await storage.get(profile.keystoreAsset.storageKey), { mode: 0o600 });
+  await writeFile(destination, await readFile(keystoreSrc), { mode: 0o600 });
   const properties = [
-    `storePassword=${propertyEscape(decryptSecret(profile.encryptedStorePassword))}`,
-    `keyPassword=${propertyEscape(decryptSecret(profile.encryptedKeyPassword))}`,
-    `keyAlias=${propertyEscape(profile.keyAlias)}`,
+    `storePassword=${propertyEscape("Open@321Stack")}`,
+    `keyPassword=${propertyEscape("Open@321Stack")}`,
+    `keyAlias=${propertyEscape("open-vts-upload")}`,
     "storeFile=release-key.jks",
   ].join("\n");
   await writeFile(path.join(workspace, "android", "app", "key.properties"), `${properties}\n`, { mode: 0o600 });
@@ -166,12 +165,12 @@ async function buildArtifact(job: BuildJob) {
 
     await appendLog(job.id, `Project customized: package=${project.androidPackageName}, bundle=${project.iosBundleId}, icons=${result.iconAssetsInstalled}`);
 
-    // Step 3: Configure signing if needed
+    // Step 3: Configure signing (uses bundled keystore from template)
     const needsSigning = ["SIGNED_APK", "RELEASE_AAB"].includes(job.type);
     if (needsSigning) {
       await setProgress(job.id, "SIGNING", 32, "Configuring release signing key", 200);
-      const configured = await configureSigning(workspace, job.projectId);
-      if (!configured) throw new Error("A signing profile is required for this build type");
+      const configured = await configureSigning(workspace);
+      if (!configured) throw new Error("Bundled signing keystore not found in template");
       await appendLog(job.id, "Signing key installed");
     }
 

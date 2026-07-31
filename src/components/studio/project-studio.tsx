@@ -3,7 +3,7 @@
 import JSZip from "jszip";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Apple, Archive, ArrowLeft, Box, Check, CheckCircle2, Clock3, Code2, Download, FileKey2, Hammer, ImageIcon, LoaderCircle, PackageCheck, Save, ShieldCheck, Smartphone, UploadCloud } from "lucide-react";
+import { AlertCircle, Apple, Archive, ArrowLeft, Box, Check, CheckCircle2, Clock3, Code2, Download, Globe, Hammer, ImageIcon, LoaderCircle, PackageCheck, Save, ShieldCheck, Smartphone, XCircle } from "lucide-react";
 import { AppPreview } from "@/components/studio/app-preview";
 import { IconArchiveUpload, LogoUpload } from "@/components/studio/asset-upload";
 import { useStudio } from "@/components/studio-provider";
@@ -17,13 +17,34 @@ import type { BuildStatus, BuildType, StudioBuild, StudioProject } from "@/lib/t
 import { projectSchema } from "@/lib/validation";
 
 type Tab = "identity" | "branding" | "build";
+type UrlStatus = "idle" | "validating" | "valid" | "invalid";
 const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE !== "false";
 
-const resources: { type: BuildType; label: string; copy: string; icon: typeof Box; signing?: boolean }[] = [
+function useApiUrlValidation() {
+  const [status, setStatus] = useState<UrlStatus>("idle");
+  const [message, setMessage] = useState("");
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const validate = (url: string) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (!url || url.length < 10) { setStatus("idle"); setMessage(""); return; }
+    setStatus("validating"); setMessage("");
+    timerRef.current = setTimeout(async () => {
+      try {
+        const response = await fetch("/api/validate-api-url", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
+        const result = await response.json();
+        if (result.valid) { setStatus("valid"); setMessage("API is reachable"); }
+        else { setStatus("invalid"); setMessage(result.error || "Unreachable"); }
+      } catch { setStatus("invalid"); setMessage("Validation request failed"); }
+    }, 800);
+  };
+  return { status, message, validate };
+}
+
+const resources: { type: BuildType; label: string; copy: string; icon: typeof Box }[] = [
   { type: "DEBUG_APK", label: "Debug APK", copy: "Install directly for testing", icon: Box },
   { type: "RELEASE_APK", label: "Release APK", copy: "Optimized Android package", icon: Smartphone },
-  { type: "SIGNED_APK", label: "Signed APK", copy: "Signed with your release key", icon: ShieldCheck, signing: true },
-  { type: "RELEASE_AAB", label: "Android App Bundle", copy: "Ready for Google Play", icon: PackageCheck, signing: true },
+  { type: "SIGNED_APK", label: "Signed APK", copy: "Signed with bundled release key", icon: ShieldCheck },
+  { type: "RELEASE_AAB", label: "Android App Bundle", copy: "Ready for Google Play", icon: PackageCheck },
   { type: "SOURCE_ZIP", label: "Source code", copy: "Customized Flutter project", icon: Archive },
 ];
 
@@ -59,25 +80,15 @@ export function ProjectStudio({ project }: { project: StudioProject }) {
   const [saved, setSaved] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [iconBusy, setIconBusy] = useState(false);
+  const { status: urlStatus, message: urlMessage, validate: validateUrl } = useApiUrlValidation();
   const [iconArchive, setIconArchive] = useState<Blob>();
   const [builds, setBuilds] = useState<StudioBuild[]>(() => readDemoBuilds(project.id));
   const [activeBuild, setActiveBuild] = useState<StudioBuild>();
   const [buildLog, setBuildLog] = useState<string[]>([]);
-  const [signingReady, setSigningReady] = useState(false);
-  const [signingBusy, setSigningBusy] = useState(false);
-  const [signingFile, setSigningFile] = useState<File>();
-  const [keyAlias, setKeyAlias] = useState("");
-  const [storePassword, setStorePassword] = useState("");
-  const [keyPassword, setKeyPassword] = useState("");
-  const keystoreRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (DEMO_MODE) return;
-    Promise.all([
-      fetch(`/api/projects/${project.id}/signing-profile`).then((response) => response.ok ? response.json() : null),
-      fetch(`/api/projects/${project.id}/builds`, { cache: "no-store" }).then((response) => response.ok ? response.json() : null),
-    ]).then(([signing, history]) => {
-      if (signing?.profile) { setSigningReady(true); setKeyAlias(signing.profile.keyAlias); }
+    fetch(`/api/projects/${project.id}/builds`, { cache: "no-store" }).then((response) => response.ok ? response.json() : null).then((history) => {
       if (history?.builds) setBuilds(history.builds);
     }).catch(() => undefined);
   }, [project.id]);
@@ -89,6 +100,7 @@ export function ProjectStudio({ project }: { project: StudioProject }) {
     setDraft((current) => ({ ...current, [field]: value }));
     setErrors((current) => ({ ...current, [field]: "" }));
     setSaved(false);
+    if (field === "apiBaseUrl" && typeof value === "string") validateUrl(value);
   };
 
   const applyPersistedChanges = (changes: Partial<StudioProject>, configurationRevision: number) => {
@@ -173,23 +185,6 @@ export function ProjectStudio({ project }: { project: StudioProject }) {
     applyPersistedChanges({ [field]: payload.asset.url }, payload.configurationRevision);
   };
 
-  const saveSigningProfile = async () => {
-    if (!signingFile) { keystoreRef.current?.click(); return; }
-    setSigningBusy(true);
-    try {
-      if (DEMO_MODE) {
-        applyPersistedChanges({}, baseline.configurationRevision + 1);
-        setSigningReady(true); setStorePassword(""); setKeyPassword("");
-        return;
-      }
-      const form = new FormData(); form.set("keystore", signingFile); form.set("keyAlias", keyAlias); form.set("storePassword", storePassword); form.set("keyPassword", keyPassword || storePassword);
-      const response = await fetch(`/api/projects/${project.id}/signing-profile`, { method: "POST", body: form });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Signing profile could not be saved");
-      applyPersistedChanges({}, payload.configurationRevision);
-      setSigningReady(true); setStorePassword(""); setKeyPassword("");
-    } finally { setSigningBusy(false); }
-  };
 
   const downloadSource = async (sourceProject: StudioProject) => {
     const form = new FormData(); form.set("project", JSON.stringify(sourceProject));
@@ -273,11 +268,11 @@ export function ProjectStudio({ project }: { project: StudioProject }) {
         <section className="min-w-0 overflow-hidden rounded-[18px] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-card)]">
           <div className="grid grid-cols-3 border-b border-[var(--line)] bg-[var(--surface-elevated)] p-1.5">{([{ id: "identity", label: "Identity", icon: Code2 }, { id: "branding", label: "Branding", icon: ImageIcon }, { id: "build", label: "Build & release", icon: PackageCheck }] as const).map((item) => <button key={item.id} onClick={() => setTab(item.id)} className={cn("flex h-10 items-center justify-center gap-2 rounded-[9px] text-[10px] font-bold transition", tab === item.id ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)] hover:text-[var(--foreground)]")}><item.icon className="size-3.5" /><span>{item.label}</span></button>)}</div>
 
-          {tab === "identity" ? <div className="p-5 sm:p-6"><SectionTitle title="Application identity" copy="Set the names and identifiers for each platform." /><div className="mt-5 grid gap-4"><PlatformPanel icon={<Smartphone className="size-4" />} title="Android"><FieldShell label="Application name" error={errors.androidApplicationName}><Input value={draft.androidApplicationName} onChange={(event) => set("androidApplicationName", event.target.value)} /></FieldShell><FieldShell label="Package name" error={errors.androidPackageName}><Input className="font-mono text-[11px]" value={draft.androidPackageName} onChange={(event) => set("androidPackageName", event.target.value)} /></FieldShell></PlatformPanel><PlatformPanel icon={<Apple className="size-4" />} title="iOS"><FieldShell label="Application name" error={errors.iosApplicationName}><Input value={draft.iosApplicationName} onChange={(event) => set("iosApplicationName", event.target.value)} /></FieldShell><FieldShell label="Bundle identifier" error={errors.iosBundleId}><Input className="font-mono text-[11px]" value={draft.iosBundleId} onChange={(event) => set("iosBundleId", event.target.value)} /></FieldShell></PlatformPanel><FieldShell label="Description" optional><Textarea value={draft.description || ""} onChange={(event) => set("description", event.target.value)} /></FieldShell></div></div> : null}
+          {tab === "identity" ? <div className="p-5 sm:p-6"><SectionTitle title="Application identity" copy="Set the names and identifiers for each platform." /><div className="mt-5 grid gap-4"><PlatformPanel icon={<Smartphone className="size-4" />} title="Android"><FieldShell label="Application name" error={errors.androidApplicationName}><Input value={draft.androidApplicationName} onChange={(event) => set("androidApplicationName", event.target.value)} /></FieldShell><FieldShell label="Package name" error={errors.androidPackageName}><Input className="font-mono text-[11px]" value={draft.androidPackageName} onChange={(event) => set("androidPackageName", event.target.value)} /></FieldShell></PlatformPanel><PlatformPanel icon={<Apple className="size-4" />} title="iOS"><FieldShell label="Application name" error={errors.iosApplicationName}><Input value={draft.iosApplicationName} onChange={(event) => set("iosApplicationName", event.target.value)} /></FieldShell><FieldShell label="Bundle identifier" error={errors.iosBundleId}><Input className="font-mono text-[11px]" value={draft.iosBundleId} onChange={(event) => set("iosBundleId", event.target.value)} /></FieldShell></PlatformPanel><PlatformPanel icon={<Globe className="size-4" />} title="Base API URL"><FieldShell label="API base URL" error={errors.apiBaseUrl}><div className="relative"><Input className="font-mono text-[11px] pr-8" value={draft.apiBaseUrl} onChange={(event) => set("apiBaseUrl", event.target.value)} placeholder="https://app.openvts.io/api" /><span className="absolute right-2.5 top-1/2 -translate-y-1/2">{urlStatus === "validating" ? <LoaderCircle className="size-3.5 animate-spin text-[var(--muted)]" /> : urlStatus === "valid" ? <CheckCircle2 className="size-3.5 text-[var(--success)]" /> : urlStatus === "invalid" ? <XCircle className="size-3.5 text-[var(--danger)]" /> : null}</span></div></FieldShell>{urlMessage ? <p className={`mt-1.5 text-[9px] font-medium ${urlStatus === "valid" ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>{urlMessage}</p> : null}<p className="mt-1 text-[9px] text-[var(--muted)]">Validates by calling <span className="font-mono">{draft.apiBaseUrl}/health</span></p></PlatformPanel><FieldShell label="Description" optional><Textarea value={draft.description || ""} onChange={(event) => set("description", event.target.value)} /></FieldShell></div></div> : null}
 
           {tab === "branding" ? <div className="p-5 sm:p-6"><SectionTitle title="Logos and launcher icons" copy="Upload the assets your application should use." /><div className="mt-5 grid gap-3 sm:grid-cols-2"><LogoUpload label="Light logo" description="For light application surfaces" value={draft.logoLightUrl} onChange={(value, file) => void updateLogo("LOGO_LIGHT", value, file)} /><LogoUpload label="Dark logo" description="For dark application surfaces" value={draft.logoDarkUrl} onChange={(value, file) => void updateLogo("LOGO_DARK", value, file)} /></div><div className="mt-4 flex items-center justify-between rounded-xl border border-[var(--line)] p-4"><div><p className="text-[11px] font-bold">Accent color</p><p className="mt-1 text-[9px] text-[var(--muted)]">Used for active controls and routes.</p></div><div className="flex items-center gap-2"><input aria-label="Accent color" type="color" value={draft.accentColor} onChange={(event) => set("accentColor", event.target.value)} className="size-9 cursor-pointer rounded-lg border-0 bg-transparent p-0" /><Input className="w-24 font-mono text-[10px] uppercase" value={draft.accentColor} onChange={(event) => set("accentColor", event.target.value)} /></div></div><div className="mt-5"><p className="mb-3 text-[11px] font-bold">App launcher icons</p><IconArchiveUpload valid={draft.iconManifest?.valid} name={draft.iconArchiveName} details={draft.iconManifest ? `${draft.iconManifest.fileCount} files · Android ${draft.iconManifest.platforms.android ? "ready" : "missing"} · iOS ${draft.iconManifest.platforms.ios ? "ready" : "missing"}` : undefined} previewUrl={draft.iconPreviewUrl} busy={iconBusy} onZip={(file) => void acceptZip(file)} onFolder={(files) => void acceptFolder(files)} onRemove={() => { setIconArchive(undefined); set("iconArchiveName", undefined); set("iconManifest", undefined); set("iconPreviewUrl", undefined); }} /></div>{draft.iconManifest ? <div className="mt-3 grid gap-2">{draft.iconManifest.missing.map((item) => <p key={item} className="flex items-start gap-2 text-[9px] text-[var(--danger)]"><AlertCircle className="mt-0.5 size-3 shrink-0" />Missing {item}</p>)}{draft.iconManifest.valid ? <p className="flex items-center gap-2 text-[9px] font-semibold text-[var(--success)]"><CheckCircle2 className="size-3" />Android and iOS icons are ready.</p> : null}</div> : null}</div> : null}
 
-          {tab === "build" ? <div className="p-5 sm:p-6"><SectionTitle title="Build and download" copy="Every download always matches your latest saved changes." />{activeBuild ? <BuildProgress build={activeBuild} log={buildLog} onDownload={() => void downloadBuild(activeBuild)} onClose={() => setActiveBuild(undefined)} /> : null}{dirty ? <div className="mt-4 flex items-center gap-2 rounded-xl bg-[var(--warning-soft)] px-3 py-2.5 text-[9px] font-semibold text-[var(--warning)]"><Save className="size-3.5" />Your changes will be saved automatically before building.</div> : null}<div className="mt-5 rounded-xl border border-[var(--line)] p-4"><div className="flex items-start gap-3"><span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[var(--accent-soft)]"><FileKey2 className="size-4" /></span><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-bold">Android signing key</p><p className="mt-1 text-[9px] text-[var(--muted)]">Required for signed APK and App Bundle.</p></div><Badge tone={signingReady ? "success" : "warning"}>{signingReady ? "Connected" : "Not connected"}</Badge></div><button type="button" onClick={() => keystoreRef.current?.click()} className="mt-3 flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--line-strong)] text-[9px] font-bold hover:border-[var(--foreground)]"><UploadCloud className="size-3.5" />{signingFile?.name || (signingReady ? "Replace signing key" : "Choose .jks or .keystore")}</button><input ref={keystoreRef} type="file" accept=".jks,.keystore" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) setSigningFile(file); }} />{signingFile ? <div className="mt-3 grid gap-2 sm:grid-cols-2"><Input placeholder="Key alias" value={keyAlias} onChange={(event) => setKeyAlias(event.target.value)} /><Input type="password" placeholder="Store password" autoComplete="new-password" value={storePassword} onChange={(event) => setStorePassword(event.target.value)} /><Input type="password" placeholder="Key password (optional)" autoComplete="new-password" value={keyPassword} onChange={(event) => setKeyPassword(event.target.value)} /><Button type="button" variant="secondary" size="sm" loading={signingBusy} onClick={() => void saveSigningProfile()}>Save signing key</Button></div> : null}</div></div></div><div className="mt-4 divide-y divide-[var(--line)] overflow-hidden rounded-xl border border-[var(--line)]">{resources.map((resource) => { const current = currentBuildFor(builds, resource.type, baseline.configurationRevision, dirty); const latest = latestSuccessfulBuild(builds, resource.type); const running = activeBuild?.type === resource.type && isBuildRunning(activeBuild); const unavailable = Boolean(resource.signing && !signingReady); return <div key={resource.type} className="grid gap-3 bg-[var(--surface)] p-3.5 sm:grid-cols-[auto_1fr_auto] sm:items-center"><span className="grid size-9 place-items-center rounded-[10px] bg-[var(--accent-soft)]"><resource.icon className="size-3.5" /></span><div><div className="flex flex-wrap items-center gap-2"><p className="text-[10px] font-bold">{resource.label}</p>{current ? <Badge tone="success">Up to date</Badge> : latest ? <Badge tone="warning">Rebuild required</Badge> : null}</div><p className="mt-1 text-[9px] text-[var(--muted)]">{unavailable ? "Connect a signing key first" : running ? activeBuild?.currentStage : current ? `Built for revision ${current.projectRevision}` : latest ? "Application changed since the last build" : resource.copy}</p></div><Button type="button" size="sm" variant={current ? "secondary" : "primary"} disabled={unavailable || Boolean(anyBuildRunning && !running)} loading={running} onClick={() => current ? void downloadBuild(current) : void runBuild(resource.type)}>{current ? <Download className="size-3.5" /> : <Hammer className="size-3.5" />}{running ? "Building" : current ? "Download" : "Build"}</Button></div>; })}</div></div> : null}
+          {tab === "build" ? <div className="p-5 sm:p-6"><SectionTitle title="Build and download" copy="Every download always matches your latest saved changes." />{activeBuild ? <BuildProgress build={activeBuild} log={buildLog} onDownload={() => void downloadBuild(activeBuild)} onClose={() => setActiveBuild(undefined)} /> : null}{dirty ? <div className="mt-4 flex items-center gap-2 rounded-xl bg-[var(--warning-soft)] px-3 py-2.5 text-[9px] font-semibold text-[var(--warning)]"><Save className="size-3.5" />Your changes will be saved automatically before building.</div> : null}<div className="mt-4 divide-y divide-[var(--line)] overflow-hidden rounded-xl border border-[var(--line)]">{resources.map((resource) => { const current = currentBuildFor(builds, resource.type, baseline.configurationRevision, dirty); const latest = latestSuccessfulBuild(builds, resource.type); const running = activeBuild?.type === resource.type && isBuildRunning(activeBuild); return <div key={resource.type} className="grid gap-3 bg-[var(--surface)] p-3.5 sm:grid-cols-[auto_1fr_auto] sm:items-center"><span className="grid size-9 place-items-center rounded-[10px] bg-[var(--accent-soft)]"><resource.icon className="size-3.5" /></span><div><div className="flex flex-wrap items-center gap-2"><p className="text-[10px] font-bold">{resource.label}</p>{current ? <Badge tone="success">Up to date</Badge> : latest ? <Badge tone="warning">Rebuild required</Badge> : null}</div><p className="mt-1 text-[9px] text-[var(--muted)]">{running ? activeBuild?.currentStage : current ? `Built for revision ${current.projectRevision}` : latest ? "Application changed since the last build" : resource.copy}</p></div><Button type="button" size="sm" variant={current ? "secondary" : "primary"} disabled={Boolean(anyBuildRunning && !running)} loading={running} onClick={() => current ? void downloadBuild(current) : void runBuild(resource.type)}>{current ? <Download className="size-3.5" /> : <Hammer className="size-3.5" />}{running ? "Building" : current ? "Download" : "Build"}</Button></div>; })}</div></div> : null}
         </section>
 
         <AppPreview project={draft} platform={platform} appearance={appearance} onPlatformChange={setPlatform} onAppearanceChange={setAppearance} />

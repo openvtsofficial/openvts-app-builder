@@ -17,6 +17,7 @@ export function toStudioProject(project: Project & { assets?: Asset[] }): Studio
     iosApplicationName: project.iosApplicationName,
     androidPackageName: project.androidPackageName,
     iosBundleId: project.iosBundleId,
+    apiBaseUrl: project.apiBaseUrl,
     accentColor: project.accentColor,
     logoLightUrl: light ? `/api/assets/${light.id}` : undefined,
     logoDarkUrl: dark ? `/api/assets/${dark.id}` : undefined,

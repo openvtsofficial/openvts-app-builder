@@ -21,6 +21,7 @@ export interface StudioProject {
   iosApplicationName: string;
   androidPackageName: string;
   iosBundleId: string;
+  apiBaseUrl: string;
   accentColor: string;
   logoLightUrl?: string;
   logoDarkUrl?: string;

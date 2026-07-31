@@ -108,6 +108,7 @@ model Project {
   iosApplicationName   String
   androidPackageName   String        @unique
   iosBundleId          String        @unique
+  apiBaseUrl           String        @default("https://app.openvts.io/api")
   accentColor          String        @default("#111111")
   logoLightKey         String?
   logoDarkKey          String?

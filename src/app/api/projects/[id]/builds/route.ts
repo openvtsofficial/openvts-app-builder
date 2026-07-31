@@ -20,10 +20,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const { id } = await params;
     const project = await requireOwnedProject(id, ownerId);
     const { type } = requestSchema.parse(await request.json());
-    if (["SIGNED_APK", "RELEASE_AAB"].includes(type)) {
-      const signing = await prisma.signingProfile.findUnique({ where: { projectId: id } });
-      if (!signing) throw new ApiError(409, "Connect an Android signing profile before requesting this build");
-    }
     const build = await prisma.$transaction(async (tx) => {
       const job = await tx.buildJob.create({ data: { projectId: id, requestedById: ownerId, type, projectRevision: project.configurationRevision, currentStage: "Waiting for an isolated Flutter runner", etaSeconds: type === "SOURCE_ZIP" ? 30 : 300 } });
       await tx.project.update({ where: { id }, data: { status: "BUILDING" } });
