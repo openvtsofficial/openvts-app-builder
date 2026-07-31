@@ -260,6 +260,20 @@ export async function materializeFlutterProject({ project, templateRoot, outputR
   const buildDir = [outputRoot, "build"].join(path.sep);
   await rm(buildDir, { recursive: true, force: true });
 
+  // Step 1b: Sanitize gradle.properties for Linux build environment
+  const gradleProps = path.join(outputRoot, "android", "gradle.properties");
+  const propsContent = await readFile(gradleProps, "utf8").catch(() => "");
+  if (propsContent) {
+    const sanitized = propsContent
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("org.gradle.java.home"))
+      .join("\n")
+      .replace(/-Xmx\d+G/, "-Xmx2G")
+      .replace(/-XX:MaxMetaspaceSize=\d+G/, "-XX:MaxMetaspaceSize=1G")
+      .replace(/-XX:ReservedCodeCacheSize=\d+m/, "-XX:ReservedCodeCacheSize=256m");
+    await writeFile(gradleProps, sanitized, "utf8");
+  }
+
   // Step 2: Replace hardcoded values with user's configuration
   await replaceInTextFiles(outputRoot, project);
 
