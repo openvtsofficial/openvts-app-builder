@@ -269,7 +269,7 @@ async function buildArtifact(job: BuildJob) {
         job.type === "RELEASE_AAB" ? name.endsWith(".aab") : name.endsWith(".apk")
       )) ?? "";
       if (!artifactPath) {
-        const files = await readdir(outputRoot, { recursive: true } as any).catch(() => [] as string[]);
+        const files = await readdir(outputRoot).catch(() => [] as string[]);
         await appendLog(job.id, `Output directory contents: ${JSON.stringify(files).slice(0, 500)}`);
         throw new Error("Flutter completed without producing the expected artifact");
       }
