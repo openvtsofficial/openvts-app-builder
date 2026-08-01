@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    image: studio-openvts:latest
+    image: ${DOCKER_IMAGE:-ghcr.io/openvtsofficial/openvts-app-builder:latest}
     container_name: studio-openvts
     restart: unless-stopped
     ports:
@@ -41,7 +41,7 @@ services:
 
   worker:
     build: .
-    image: studio-openvts:latest
+    image: ${DOCKER_IMAGE:-ghcr.io/openvtsofficial/openvts-app-builder:latest}
     container_name: studio-worker
     restart: unless-stopped
     stop_grace_period: 30s

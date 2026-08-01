@@ -112,3 +112,51 @@ npm run build
 ```
 
 The repository intentionally keeps the Flutter worker separate from the Next.js request path, allowing the dashboard and PostgreSQL operations to stay responsive during expensive native builds.
+
+## Deployment
+
+The project includes a CI/CD workflow (`.github/workflows/ci-cd.yml`) that automatically:
+1. Runs lint, typecheck, and tests on every push
+2. Builds and pushes Docker image to GitHub Container Registry (GHCR)
+3. Deploys to AWS EC2 on push to `main` branch
+
+### Required GitHub Secrets
+
+Configure these in **Settings → Secrets and variables → Actions → Repository secrets**:
+
+- `AWS_EC2_HOST` - Server IP address (e.g., `3.108.163.45`)
+- `AWS_EC2_USER` - SSH user (e.g., `ubuntu`)
+- `AWS_EC2_SSH_KEY` - Private SSH key (PEM format, entire file contents)
+
+### Server Setup
+
+The deployment expects this directory structure on the server:
+
+```
+/opt/studio/app/
+├── docker-compose.prod.yml
+├── .env (created from .env.production)
+└── [git repository files]
+```
+
+The `.env` file must contain:
+```bash
+AUTH_SECRET=<random-64-char-string>
+AUTH_GOOGLE_ID=<google-oauth-client-id>
+AUTH_GOOGLE_SECRET=<google-oauth-client-secret>
+SIGNING_ENCRYPTION_KEY=<64-char-hex-string>
+```
+
+### Manual Deployment
+
+If CI/CD is not configured, deploy manually:
+
+```bash
+# On the server
+cd /opt/studio/app
+git pull origin main
+cp .env.production .env  # if .env doesn't exist
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+docker exec studio-openvts npx prisma migrate deploy
+```

@@ -140,6 +140,7 @@ jobs:
     env:
       EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
       EC2_USER: ${{ secrets.AWS_EC2_USER }}
+      DOCKER_IMAGE: ghcr.io/${{ github.repository }}:latest
     steps:
       - name: Check deployment secrets
         id: check-secrets
@@ -166,20 +167,33 @@ jobs:
             set -e
             echo "=== Deploying OpenVTS App Studio ==="
 
-            cd /opt/studio
+            cd /opt/studio/app
 
-            echo "Pulling latest image..."
-            docker compose pull
+            echo "Pulling latest code..."
+            git pull origin main
+
+            echo "Ensuring .env file exists..."
+            if [ ! -f .env ]; then
+              if [ -f .env.production ]; then
+                cp .env.production .env
+                echo ".env created from .env.production"
+              else
+                echo "WARNING: No .env file found"
+              fi
+            fi
+
+            echo "Pulling latest Docker image from GHCR..."
+            docker compose -f docker-compose.prod.yml pull
 
             echo "Restarting containers..."
-            docker compose up -d
+            docker compose -f docker-compose.prod.yml up -d
 
             echo "Running database migrations..."
             sleep 5
             docker exec studio-openvts npx prisma migrate deploy || echo "Migrations skipped (no pending)"
 
-            echo "Verifying container..."
-            docker ps --filter "name=studio-openvts" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+            echo "Verifying containers..."
+            docker ps --filter "name=studio" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
             echo "=== Deployment complete ==="
 
