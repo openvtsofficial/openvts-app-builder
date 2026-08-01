@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh -i \"E:/Development/AWS/zebrank/zebrank.pem\" -o StrictHostKeyChecking=no ubuntu@3.108.163.45 \"docker exec studio-worker sh -c 'ls -lh /proc/*/exe 2>/dev/null | wc -l'\")",
+      "Bash(ssh -i \"E:/Development/AWS/zebrank/zebrank.pem\" -o StrictHostKeyChecking=no ubuntu@3.108.163.45 \"docker exec studio-worker ls -la /app/data/workspaces/ | grep cms9gx49s\")",
+      "Bash(ssh -i \"E:/Development/AWS/zebrank/zebrank.pem\" -o StrictHostKeyChecking=no ubuntu@3.108.163.45 \"docker logs studio-worker 2>&1 | tail -200 | grep -E '\\(cms9gx49s|Installing|Download|SDK|Platform|Build-Tools|error|Error|timeout|Timeout|killed|Killed\\)'\")",
+      "Bash(ssh -i \"E:/Development/AWS/zebrank/zebrank.pem\" -o StrictHostKeyChecking=no ubuntu@3.108.163.45 \"docker logs studio-worker 2>&1 | grep -A 200 'Processing job cms9gx49s000001ovbxgxkv69'\")",
+      "Bash(ssh -i \"E:/Development/AWS/zebrank/zebrank.pem\" -o StrictHostKeyChecking=no ubuntu@3.108.163.45 \"docker exec openvts-postgres psql -U studio_app -d openvts_app_studio -c \\\\\"SELECT id, status, NOW\\(\\) - \\\\\\\\\\\\\"startedAt\\\\\\\\\\\\\" as elapsed FROM \\\\\\\\\\\\\"BuildJob\\\\\\\\\\\\\" WHERE status='COMPILING' ORDER BY \\\\\\\\\\\\\"startedAt\\\\\\\\\\\\\" DESC LIMIT 1\\\\\"\")"
+    ]
+  }
+}
