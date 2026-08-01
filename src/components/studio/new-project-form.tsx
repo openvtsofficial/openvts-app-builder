@@ -14,8 +14,8 @@ const initial = {
   description: "",
   androidApplicationName: "",
   iosApplicationName: "",
-  androidPackageName: "com.company.app",
-  iosBundleId: "com.company.app",
+  androidPackageName: "",
+  iosBundleId: "",
   apiBaseUrl: "https://app.openvts.io/api",
   accentColor: "#171716",
 };
@@ -52,23 +52,29 @@ export function NewProjectForm() {
   const [form, setForm] = useState(initial);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [serverError, setServerError] = useState("");
   const { status: urlStatus, message: urlMessage, validate: validateUrl } = useApiUrlValidation();
 
   const set = (field: keyof typeof form, value: string) => {
     setForm((current) => {
       const next = { ...current, [field]: value };
       if (field === "name") {
+        const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, "");
         if (!current.androidApplicationName || current.androidApplicationName === current.name) next.androidApplicationName = value;
         if (!current.iosApplicationName || current.iosApplicationName === current.name) next.iosApplicationName = value;
+        if (!current.androidPackageName || current.androidPackageName === `com.company.${slug}`) next.androidPackageName = slug ? `com.company.${slug}` : "";
+        if (!current.iosBundleId || current.iosBundleId === `com.company.${slug}`) next.iosBundleId = slug ? `com.company.${slug}` : "";
       }
       if (field === "apiBaseUrl") validateUrl(value);
       return next;
     });
     setErrors((current) => ({ ...current, [field]: "" }));
+    setServerError("");
   };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
+    setServerError("");
     const result = projectSchema.safeParse(form);
     if (!result.success) {
       const next: Record<string, string> = {};
@@ -80,7 +86,17 @@ export function NewProjectForm() {
     try {
       const project = await createProject(result.data);
       router.push(`/projects/${project.id}`);
-    } finally { setSubmitting(false); }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create project";
+      if (message.includes("unique") || message.includes("already exists")) {
+        setServerError("A project with this package name or bundle ID already exists. Please use different identifiers.");
+      } else if (message.includes("Authentication")) {
+        setServerError("Your session has expired. Please refresh the page and try again.");
+      } else {
+        setServerError(message);
+      }
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -93,7 +109,8 @@ export function NewProjectForm() {
           <FieldShell label="Description" error={errors.description} optional><Textarea value={form.description} onChange={(event) => set("description", event.target.value)} placeholder="Optional internal note" /></FieldShell>
         </div>
         <div className="border-b border-[var(--line)] p-4"><div className="mb-3 flex items-center gap-2"><span className="grid size-7 place-items-center rounded-md bg-[var(--accent-soft)]"><Globe className="size-3.5" /></span><h2 className="text-[11px] font-bold">Base API URL</h2></div><FieldShell label="API base URL" error={errors.apiBaseUrl}><div className="relative"><Input className="font-mono text-[10px] pr-7" value={form.apiBaseUrl} onChange={(event) => set("apiBaseUrl", event.target.value)} placeholder="https://app.openvts.io/api" /><span className="absolute right-2 top-1/2 -translate-y-1/2">{urlStatus === "validating" ? <LoaderCircle className="size-3 animate-spin text-[var(--muted)]" /> : urlStatus === "valid" ? <CheckCircle2 className="size-3 text-[var(--success)]" /> : urlStatus === "invalid" ? <XCircle className="size-3 text-[var(--danger)]" /> : null}</span></div></FieldShell>{urlMessage ? <p className={`mt-1 text-[9px] font-medium ${urlStatus === "valid" ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>{urlMessage}</p> : null}<p className="mt-1 text-[9px] text-[var(--muted)]">Connects to <span className="font-mono">{form.apiBaseUrl}/health</span> to verify.</p></div>
-        <div className="p-4"><div className="mb-3 flex items-center gap-2"><span className="grid size-7 place-items-center rounded-md bg-[var(--accent-soft)]"><Smartphone className="size-3.5" /></span><h2 className="text-[11px] font-bold">Application identity</h2></div><div className="grid gap-3 sm:grid-cols-2"><FieldShell label="Android application name" error={errors.androidApplicationName}><Input value={form.androidApplicationName} onChange={(event) => set("androidApplicationName", event.target.value)} /></FieldShell><FieldShell label="Android package name" error={errors.androidPackageName}><Input className="font-mono text-[10px]" value={form.androidPackageName} onChange={(event) => set("androidPackageName", event.target.value)} /></FieldShell><FieldShell label="iOS application name" error={errors.iosApplicationName}><Input value={form.iosApplicationName} onChange={(event) => set("iosApplicationName", event.target.value)} /></FieldShell><FieldShell label="iOS bundle identifier" error={errors.iosBundleId}><Input className="font-mono text-[10px]" value={form.iosBundleId} onChange={(event) => set("iosBundleId", event.target.value)} /></FieldShell></div></div>
+        <div className="p-4"><div className="mb-3 flex items-center gap-2"><span className="grid size-7 place-items-center rounded-md bg-[var(--accent-soft)]"><Smartphone className="size-3.5" /></span><h2 className="text-[11px] font-bold">Application identity</h2></div><div className="grid gap-3 sm:grid-cols-2"><FieldShell label="Android application name" error={errors.androidApplicationName}><Input value={form.androidApplicationName} onChange={(event) => set("androidApplicationName", event.target.value)} /></FieldShell><FieldShell label="Android package name" error={errors.androidPackageName}><Input className="font-mono text-[10px]" value={form.androidPackageName} onChange={(event) => set("androidPackageName", event.target.value)} placeholder="com.company.appname" /></FieldShell><FieldShell label="iOS application name" error={errors.iosApplicationName}><Input value={form.iosApplicationName} onChange={(event) => set("iosApplicationName", event.target.value)} /></FieldShell><FieldShell label="iOS bundle identifier" error={errors.iosBundleId}><Input className="font-mono text-[10px]" value={form.iosBundleId} onChange={(event) => set("iosBundleId", event.target.value)} placeholder="com.company.appname" /></FieldShell></div></div>
+        {serverError ? <div className="flex items-start gap-2 border-t border-[var(--line)] bg-[var(--danger-soft)] px-4 py-3 text-[var(--danger)]"><XCircle className="mt-0.5 size-3.5 shrink-0" /><p className="text-[10px] font-medium">{serverError}</p></div> : null}
         <div className="flex justify-end border-t border-[var(--line)] bg-[var(--surface-elevated)] p-3 sm:px-4"><Button size="md" loading={submitting} type="submit">Create application <ArrowRight className="size-3.5" /></Button></div>
       </form>
     </div>
