@@ -28,6 +28,7 @@
 *.keystore
 *.p12
 *.mobileprovision
+!/signing/application-key.jks
 
 # logs and editor files
 npm-debug.log*

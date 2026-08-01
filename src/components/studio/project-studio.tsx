@@ -204,7 +204,20 @@ export function ProjectStudio({ project }: { project: StudioProject }) {
       const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${baseline.slug}-${build.type.toLowerCase()}.demo.txt`; document.body.append(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
       return;
     }
-    const anchor = document.createElement("a"); anchor.href = `/api/builds/${build.id}/artifact`; document.body.append(anchor); anchor.click(); anchor.remove();
+    try {
+      const response = await fetch(`/api/builds/${build.id}/artifact`);
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: "Download failed" }));
+        setBuildLog((current) => [...current, `Download error: ${err.error || "Artifact not available"}`]);
+        return;
+      }
+      const blob = await response.blob();
+      const ext = build.type === "RELEASE_AAB" ? "aab" : build.type === "SOURCE_ZIP" ? "zip" : "apk";
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${baseline.slug}-${build.type.toLowerCase()}.${ext}`; document.body.append(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+    } catch {
+      setBuildLog((current) => [...current, "Download failed. The build artifact may not be available."]);
+    }
   };
 
   const upsertBuild = (build: StudioBuild) => {
@@ -257,6 +270,17 @@ export function ProjectStudio({ project }: { project: StudioProject }) {
     setActiveBuild(complete); upsertBuild(complete); setBuildLog((current) => [...current, "Artifact verified", "Download ready"]);
   };
 
+  const cancelBuild = async () => {
+    if (!activeBuild || !isBuildRunning(activeBuild)) return;
+    try {
+      await fetch(`/api/builds/${activeBuild.id}/cancel`, { method: "POST" });
+      setActiveBuild({ ...activeBuild, status: "CANCELLED", currentStage: "Cancelled by user", etaSeconds: undefined });
+      setBuildLog((current) => [...current, "Build cancelled by user"]);
+    } catch {
+      setBuildLog((current) => [...current, "Failed to cancel build"]);
+    }
+  };
+
   return (
     <div className="enter-up mx-auto max-w-[1200px]">
       <div className="flex flex-col gap-3 border-b border-[var(--line)] pb-4 sm:flex-row sm:items-end sm:justify-between">
@@ -272,7 +296,7 @@ export function ProjectStudio({ project }: { project: StudioProject }) {
 
           {tab === "branding" ? <div className="p-4"><SectionTitle title="Logos and launcher icons" copy="Upload the assets your application should use." /><div className="mt-4 grid gap-3 sm:grid-cols-2"><LogoUpload label="Light logo" description="For light application surfaces" value={draft.logoLightUrl} onChange={(value, file) => void updateLogo("LOGO_LIGHT", value, file)} /><LogoUpload label="Dark logo" description="For dark application surfaces" value={draft.logoDarkUrl} onChange={(value, file) => void updateLogo("LOGO_DARK", value, file)} /></div><div className="mt-3 flex items-center justify-between rounded-lg border border-[var(--line)] p-3"><div><p className="text-[10px] font-bold">Accent color</p><p className="mt-0.5 text-[9px] text-[var(--muted)]">Used for active controls and routes.</p></div><div className="flex items-center gap-2"><input aria-label="Accent color" type="color" value={draft.accentColor} onChange={(event) => set("accentColor", event.target.value)} className="size-7 cursor-pointer rounded-md border-0 bg-transparent p-0" /><Input className="w-20 font-mono text-[9px] uppercase" value={draft.accentColor} onChange={(event) => set("accentColor", event.target.value)} /></div></div><div className="mt-4"><p className="mb-2 text-[10px] font-bold">App launcher icons</p><IconArchiveUpload valid={draft.iconManifest?.valid} name={draft.iconArchiveName} details={draft.iconManifest ? `${draft.iconManifest.fileCount} files · Android ${draft.iconManifest.platforms.android ? "ready" : "missing"} · iOS ${draft.iconManifest.platforms.ios ? "ready" : "missing"}` : undefined} previewUrl={draft.iconPreviewUrl} busy={iconBusy} onZip={(file) => void acceptZip(file)} onFolder={(files) => void acceptFolder(files)} onRemove={() => { setIconArchive(undefined); set("iconArchiveName", undefined); set("iconManifest", undefined); set("iconPreviewUrl", undefined); }} /></div>{draft.iconManifest ? <div className="mt-2 grid gap-1.5">{draft.iconManifest.missing.map((item) => <p key={item} className="flex items-start gap-1.5 text-[9px] text-[var(--danger)]"><AlertCircle className="mt-0.5 size-3 shrink-0" />Missing {item}</p>)}{draft.iconManifest.valid ? <p className="flex items-center gap-1.5 text-[9px] font-semibold text-[var(--success)]"><CheckCircle2 className="size-3" />Android and iOS icons are ready.</p> : null}</div> : null}</div> : null}
 
-          {tab === "build" ? <div className="p-4"><SectionTitle title="Build and download" copy="Every download always matches your latest saved changes." />{activeBuild ? <BuildProgress build={activeBuild} log={buildLog} onDownload={() => void downloadBuild(activeBuild)} onClose={() => setActiveBuild(undefined)} /> : null}{dirty ? <div className="mt-3 flex items-center gap-2 rounded-lg bg-[var(--warning-soft)] px-2.5 py-2 text-[9px] font-semibold text-[var(--warning)]"><Save className="size-3" />Changes will be saved before building.</div> : null}<div className="mt-3 divide-y divide-[var(--line)] overflow-hidden rounded-lg border border-[var(--line)]">{resources.map((resource) => { const current = currentBuildFor(builds, resource.type, baseline.configurationRevision, dirty); const latest = latestSuccessfulBuild(builds, resource.type); const running = activeBuild?.type === resource.type && isBuildRunning(activeBuild); return <div key={resource.type} className="grid gap-2 bg-[var(--surface)] p-3 sm:grid-cols-[auto_1fr_auto] sm:items-center"><span className="grid size-7 place-items-center rounded-md bg-[var(--accent-soft)]"><resource.icon className="size-3" /></span><div><div className="flex flex-wrap items-center gap-1.5"><p className="text-[10px] font-bold">{resource.label}</p>{current ? <Badge tone="success">Up to date</Badge> : latest ? <Badge tone="warning">Rebuild</Badge> : null}</div><p className="mt-0.5 text-[9px] text-[var(--muted)]">{running ? activeBuild?.currentStage : current ? `Rev ${current.projectRevision}` : latest ? "Changed since last build" : resource.copy}</p></div><Button type="button" size="sm" variant={current ? "secondary" : "primary"} disabled={Boolean(anyBuildRunning && !running)} loading={running} onClick={() => current ? void downloadBuild(current) : void runBuild(resource.type)}>{current ? <Download className="size-3" /> : <Hammer className="size-3" />}{running ? "Building" : current ? "Download" : "Build"}</Button></div>; })}</div></div> : null}
+          {tab === "build" ? <div className="p-4"><SectionTitle title="Build and download" copy="Every download always matches your latest saved changes." />{activeBuild ? <BuildProgress build={activeBuild} log={buildLog} onDownload={() => void downloadBuild(activeBuild)} onCancel={() => void cancelBuild()} onClose={() => setActiveBuild(undefined)} /> : null}{dirty ? <div className="mt-3 flex items-center gap-2 rounded-lg bg-[var(--warning-soft)] px-2.5 py-2 text-[9px] font-semibold text-[var(--warning)]"><Save className="size-3" />Changes will be saved before building.</div> : null}<div className="mt-3 divide-y divide-[var(--line)] overflow-hidden rounded-lg border border-[var(--line)]">{resources.map((resource) => { const current = currentBuildFor(builds, resource.type, baseline.configurationRevision, dirty); const latest = latestSuccessfulBuild(builds, resource.type); const running = activeBuild?.type === resource.type && isBuildRunning(activeBuild); return <div key={resource.type} className="grid gap-2 bg-[var(--surface)] p-3 sm:grid-cols-[auto_1fr_auto] sm:items-center"><span className="grid size-7 place-items-center rounded-md bg-[var(--accent-soft)]"><resource.icon className="size-3" /></span><div><div className="flex flex-wrap items-center gap-1.5"><p className="text-[10px] font-bold">{resource.label}</p>{current ? <Badge tone="success">Up to date</Badge> : latest ? <Badge tone="warning">Rebuild</Badge> : null}</div><p className="mt-0.5 text-[9px] text-[var(--muted)]">{running ? activeBuild?.currentStage : current ? `Rev ${current.projectRevision}` : latest ? "Changed since last build" : resource.copy}</p></div><div className="flex items-center gap-1.5"><Button type="button" size="sm" variant={current ? "secondary" : "primary"} disabled={Boolean(anyBuildRunning && !running)} loading={running} onClick={() => current ? void downloadBuild(current) : void runBuild(resource.type)}>{current ? <Download className="size-3" /> : <Hammer className="size-3" />}{running ? "Building" : current ? "Download" : "Build"}</Button>{latest && !current ? <Button type="button" size="sm" variant="ghost" title="Download previous build" onClick={() => void downloadBuild(latest)}><Download className="size-3" /></Button> : null}</div></div>; })}</div></div> : null}
         </section>
 
         <AppPreview project={draft} platform={platform} appearance={appearance} onPlatformChange={setPlatform} onAppearanceChange={setAppearance} />
@@ -284,7 +308,7 @@ export function ProjectStudio({ project }: { project: StudioProject }) {
 function SectionTitle({ title, copy }: { title: string; copy: string }) { return <div><h2 className="text-[14px] font-bold tracking-[-.03em]">{title}</h2><p className="mt-1 text-[9px] text-[var(--muted)]">{copy}</p></div>; }
 function PlatformPanel({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) { return <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-elevated)] p-3"><div className="mb-3 flex items-center gap-2"><span className="grid size-6 place-items-center rounded-md bg-[var(--surface)] shadow-sm">{icon}</span><p className="text-[10px] font-bold">{title}</p></div><div className="grid gap-3">{children}</div></div>; }
 
-function BuildProgress({ build, log, onDownload, onClose }: { build: StudioBuild; log: string[]; onDownload: () => void; onClose: () => void }) {
+function BuildProgress({ build, log, onDownload, onCancel, onClose }: { build: StudioBuild; log: string[]; onDownload: () => void; onCancel: () => void; onClose: () => void }) {
   const done = ["SUCCEEDED", "FAILED", "CANCELLED"].includes(build.status);
   const running = !done;
   const logRef = useRef<HTMLDivElement>(null);
@@ -343,6 +367,7 @@ function BuildProgress({ build, log, onDownload, onClose }: { build: StudioBuild
           </div>
         </div>
         <div className="flex items-center gap-1.5">
+          {running ? <Button size="sm" variant="secondary" onClick={onCancel}><XCircle className="size-3" />Cancel</Button> : null}
           {build.status === "SUCCEEDED" ? <Button size="sm" onClick={onDownload}><Download className="size-3" />Download</Button> : done ? <Button size="sm" variant="secondary" onClick={onClose}>Close</Button> : null}
         </div>
       </div>

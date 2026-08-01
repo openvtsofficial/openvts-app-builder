@@ -44,6 +44,7 @@ services:
     image: studio-openvts:latest
     container_name: studio-worker
     restart: unless-stopped
+    stop_grace_period: 30s
     command: ["node", "--import=tsx", "worker/build-worker.ts"]
     environment:
       DATABASE_URL: postgresql://studio_app:StudioApp321@openvts-postgres:5432/openvts_app_studio?schema=public
@@ -59,6 +60,8 @@ services:
       LOGGER_ENABLED: "true"
       LOGGER_LEVEL: "info"
       LOG_FILE_PATH: /app/data/logs/worker.log
+      GRADLE_USER_HOME: /app/data/.gradle
+      NODE_ENV: production
     volumes:
       - studio-data:/app/data
     networks:

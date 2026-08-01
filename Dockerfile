@@ -1,7 +1,7 @@
 FROM node:20-slim AS base
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl ca-certificates curl unzip git xz-utils \
-    lib32stdc++6 libglu1-mesa openjdk-17-jdk-headless \
+    lib32stdc++6 libglu1-mesa openjdk-17-jdk-headless procps \
   && rm -rf /var/lib/apt/lists/*
 
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
@@ -22,7 +22,13 @@ RUN mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools && \
 RUN git clone --depth 1 --branch stable https://github.com/flutter/flutter.git ${FLUTTER_ROOT} && \
     flutter precache --android && \
     flutter config --no-analytics && \
-    dart --disable-analytics
+    dart --disable-analytics && \
+    mkdir -p /tmp/flutter-warmup && \
+    cd /tmp/flutter-warmup && \
+    flutter create warmup_app && \
+    cd warmup_app && \
+    flutter pub get && \
+    cd / && rm -rf /tmp/flutter-warmup
 
 # ---------- Build stage ----------
 FROM base AS builder
@@ -41,6 +47,9 @@ ENV NEXT_PUBLIC_DEMO_MODE=false
 RUN npm run setup && \
     sed -i '/org.gradle.java.home/d' templates/flutter_base/android/gradle.properties && \
     sed -i 's/-Xmx[0-9]*G/-Xmx2G/; s/MaxMetaspaceSize=[0-9]*G/MaxMetaspaceSize=1G/; s/ReservedCodeCacheSize=[0-9]*m/ReservedCodeCacheSize=256m/' templates/flutter_base/android/gradle.properties && \
+    mkdir -p templates/flutter_base/assets && \
+    cp signing/application-key.jks templates/flutter_base/assets/application-key.jks && \
+    rm -rf templates/flutter_base/build templates/flutter_base/.dart_tool && \
     npm run build
 
 # ---------- Production stage ----------

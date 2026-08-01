@@ -9,8 +9,11 @@ import type { BuildJob, BuildStatus } from "../src/generated/prisma/client";
 import { prisma } from "../src/lib/db";
 import { env } from "../src/lib/env";
 import { materializeFlutterProject, zipDirectory } from "../src/lib/flutter-template";
+import { createLogger } from "../src/lib/logger";
 import { toStudioProject } from "../src/lib/project-mapper";
 import { storage } from "../src/lib/storage";
+
+const log = createLogger("build-worker");
 
 const workerId = `${hostname()}-${process.pid}`;
 const once = process.argv.includes("--once");
@@ -78,7 +81,18 @@ function buildSpawnEnv() {
         ...(javaHome ? { JAVA_HOME: javaHome } : {}),
       }
     : {};
-  return { ...process.env, CI: "true", LANG: "C.UTF-8", ...extra };
+  return {
+    ...process.env,
+    CI: "true",
+    LANG: "C.UTF-8",
+    GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2 -Dorg.gradle.parallel=false",
+    ...extra,
+  };
+}
+
+async function isCancelled(jobId: string): Promise<boolean> {
+  const job = await prisma.buildJob.findUnique({ where: { id: jobId }, select: { status: true } });
+  return job?.status === "CANCELLED";
 }
 
 async function runCommand(jobId: string, command: string, args: string[], cwd: string, timeout = env.BUILD_TIMEOUT_MS) {
@@ -102,7 +116,17 @@ async function runCommand(jobId: string, command: string, args: string[], cwd: s
 
     const timer = setTimeout(() => { if (!settled) { child.kill("SIGKILL"); reject(new Error(`Command exceeded ${Math.round(timeout / 1000)} seconds`)); } }, timeout);
 
-    const heartbeatInterval = setInterval(() => {
+    const heartbeatInterval = setInterval(async () => {
+      if (await isCancelled(jobId)) {
+        clearInterval(heartbeatInterval);
+        clearTimeout(timer);
+        if (!settled) {
+          settled = true;
+          child.kill("SIGKILL");
+          reject(new Error("Build cancelled by user"));
+        }
+        return;
+      }
       const silentFor = Date.now() - lastActivity;
       if (silentFor > 600000) {
         clearInterval(heartbeatInterval);
@@ -113,7 +137,7 @@ async function runCommand(jobId: string, command: string, args: string[], cwd: s
           reject(new Error(`Build hung - no output for ${Math.round(silentFor / 1000)}s`));
         }
       }
-    }, 60000);
+    }, 30000);
 
     child.on("error", (error) => { if (settled) return; settled = true; clearTimeout(timer); clearInterval(heartbeatInterval); reject(error); });
     child.on("close", (code) => {
@@ -178,6 +202,13 @@ async function buildArtifact(job: BuildJob) {
   await mkdir(path.dirname(workspace), { recursive: true });
 
   try {
+    // Kill any orphaned Gradle daemons from prior builds to free memory
+    await new Promise<void>((resolve) => {
+      const kill = spawn("pkill", ["-f", "GradleDaemon"], { stdio: "ignore" });
+      kill.on("close", () => resolve());
+      kill.on("error", () => resolve());
+    });
+
     // Step 1: Copy and customize the base Flutter project
     await setProgress(job.id, "PREPARING", 10, "Copying base Flutter project from template", 260);
     await appendLog(job.id, `Template root: ${path.resolve(env.FLUTTER_TEMPLATE_ROOT)}`);
@@ -205,12 +236,14 @@ async function buildArtifact(job: BuildJob) {
       await setProgress(job.id, "SIGNING", 32, "Configuring release signing key", 200);
       const configured = await configureSigning(workspace);
       if (!configured) throw new Error("Bundled signing keystore not found in template");
+      await appendLog(job.id, `Keystore at: ${path.join(workspace, "android", "app", "release-key.jks")} exists=${existsSync(path.join(workspace, "android", "app", "release-key.jks"))}`);
+      await appendLog(job.id, `Key.properties at: ${path.join(workspace, "android", "app", "key.properties")} exists=${existsSync(path.join(workspace, "android", "app", "key.properties"))}`);
       await appendLog(job.id, "Signing key installed");
     }
 
     // Step 4: Resolve Flutter dependencies
     await setProgress(job.id, "RESOLVING_DEPENDENCIES", 40, "Running flutter pub get", 180);
-    await runCommand(job.id, env.FLUTTER_BIN, ["pub", "get"], workspace, 300_000);
+    await runCommandWithRetry(job.id, env.FLUTTER_BIN, ["pub", "get"], workspace, 2, 300_000);
 
     let artifactPath: string;
     if (job.type === "SOURCE_ZIP") {
@@ -224,17 +257,22 @@ async function buildArtifact(job: BuildJob) {
       // Build APK or AAB
       await setProgress(job.id, "COMPILING", 55, `Compiling ${job.type.replaceAll("_", " ").toLowerCase()}`, 150);
       const command = job.type === "RELEASE_AAB"
-        ? ["build", "appbundle", "--release"]
+        ? ["build", "appbundle", "--release", "--no-tree-shake-icons"]
         : job.type === "DEBUG_APK"
-        ? ["build", "apk", "--debug"]
-        : ["build", "apk", "--release"];
+        ? ["build", "apk", "--debug", "--no-tree-shake-icons"]
+        : ["build", "apk", "--release", "--no-tree-shake-icons"];
       await runCommand(job.id, env.FLUTTER_BIN, command, workspace);
 
       const outputRoot = path.join(workspace, "build", "app", "outputs");
+      await appendLog(job.id, `Searching for artifact in: ${outputRoot}`);
       artifactPath = (await findFirst(outputRoot, (name) =>
         job.type === "RELEASE_AAB" ? name.endsWith(".aab") : name.endsWith(".apk")
       )) ?? "";
-      if (!artifactPath) throw new Error("Flutter completed without producing the expected artifact");
+      if (!artifactPath) {
+        const files = await readdir(outputRoot, { recursive: true } as any).catch(() => [] as string[]);
+        await appendLog(job.id, `Output directory contents: ${JSON.stringify(files).slice(0, 500)}`);
+        throw new Error("Flutter completed without producing the expected artifact");
+      }
       await appendLog(job.id, `Artifact found: ${path.basename(artifactPath)}`);
     }
 
@@ -258,6 +296,12 @@ async function buildArtifact(job: BuildJob) {
 
 async function fail(job: BuildJob, error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown build error";
+  const current = await prisma.buildJob.findUnique({ where: { id: job.id }, select: { status: true } });
+  if (current?.status === "CANCELLED") {
+    await appendLog(job.id, "Build was cancelled by user");
+    await prisma.project.update({ where: { id: job.projectId }, data: { status: "DRAFT" } });
+    return;
+  }
   await prisma.$transaction([
     prisma.buildJob.update({ where: { id: job.id }, data: { status: "FAILED", currentStage: "Build failed", errorMessage: message, etaSeconds: null, finishedAt: new Date(), lockedAt: null, lockedBy: null } }),
     prisma.project.update({ where: { id: job.projectId }, data: { status: "FAILED" } }),
@@ -266,27 +310,27 @@ async function fail(job: BuildJob, error: unknown) {
 }
 
 async function main() {
-  console.log(`[build-worker] Starting worker ${workerId}`);
-  console.log(`[build-worker] Template root: ${path.resolve(env.FLUTTER_TEMPLATE_ROOT)}`);
-  console.log(`[build-worker] Workspace root: ${path.resolve(env.BUILD_WORKSPACE_ROOT)}`);
-  console.log(`[build-worker] Flutter binary: ${env.FLUTTER_BIN}`);
-  console.log(`[build-worker] Poll interval: ${env.BUILD_POLL_INTERVAL_MS}ms`);
-  console.log(`[build-worker] Build timeout: ${env.BUILD_TIMEOUT_MS}ms`);
+  log.info(`Starting worker ${workerId}`);
+  log.info(`Template root: ${path.resolve(env.FLUTTER_TEMPLATE_ROOT)}`);
+  log.info(`Workspace root: ${path.resolve(env.BUILD_WORKSPACE_ROOT)}`);
+  log.info(`Flutter binary: ${env.FLUTTER_BIN}`);
+  log.info(`Poll interval: ${env.BUILD_POLL_INTERVAL_MS}ms`);
+  log.info(`Build timeout: ${env.BUILD_TIMEOUT_MS}ms`);
 
   await recoverStaleJobs();
-  process.on("SIGTERM", () => { stopping = true; console.log("[build-worker] SIGTERM received, finishing current job..."); });
-  process.on("SIGINT", () => { stopping = true; console.log("[build-worker] SIGINT received, finishing current job..."); });
+  process.on("SIGTERM", () => { stopping = true; log.info("SIGTERM received, finishing current job..."); });
+  process.on("SIGINT", () => { stopping = true; log.info("SIGINT received, finishing current job..."); });
 
   do {
     const job = await claimNextJob();
     if (!job) { if (once) break; await sleep(env.BUILD_POLL_INTERVAL_MS); continue; }
-    console.log(`[build-worker] Processing job ${job.id} (type=${job.type}, project=${job.projectId})`);
-    try { await buildArtifact(job); console.log(`[build-worker] Job ${job.id} completed successfully`); }
-    catch (error) { await fail(job, error); console.error(`[build-worker] Job ${job.id} failed:`, error); }
+    log.info(`Processing job ${job.id} (type=${job.type}, project=${job.projectId})`);
+    try { await buildArtifact(job); log.info(`Job ${job.id} completed successfully`); }
+    catch (error) { await fail(job, error); log.error(`Job ${job.id} failed: ${error instanceof Error ? error.message : String(error)}`); }
   } while (!stopping && !once);
 
-  console.log("[build-worker] Shutting down");
+  log.info("Shutting down");
   await prisma.$disconnect();
 }
 
-main().catch(async (error) => { console.error(error); await prisma.$disconnect(); process.exitCode = 1; });
+main().catch(async (error) => { log.error(`Fatal: ${error instanceof Error ? error.message : String(error)}`); await prisma.$disconnect(); process.exitCode = 1; });
