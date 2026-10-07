@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { env } from "@/lib/env";
@@ -54,6 +55,23 @@ export const storage = {
     key = safeKey(key);
     if (env.STORAGE_DRIVER === "s3") await s3().send(new DeleteObjectCommand({ Bucket: env.S3_BUCKET, Key: key }));
     else await rm(localPath(key), { force: true });
+  },
+  async openDownload(key: string) {
+    key = safeKey(key);
+    if (env.STORAGE_DRIVER === "s3") {
+      const response = await s3().send(new GetObjectCommand({ Bucket: env.S3_BUCKET, Key: key }));
+      if (!response.Body) throw new Error("Stored object is empty");
+      return { body: response.Body.transformToWebStream(), size: response.ContentLength };
+    }
+    const file = await open(localPath(key), "r");
+    try {
+      const info = await file.stat();
+      const stream = file.createReadStream({ autoClose: true, highWaterMark: 64 * 1024 });
+      return { body: Readable.toWeb(stream, { strategy: { highWaterMark: 1 } }) as ReadableStream<Uint8Array>, size: info.size };
+    } catch (error) {
+      await file.close().catch(() => undefined);
+      throw error;
+    }
   },
   async signedDownloadUrl(key: string, expiresIn = 300) {
     if (env.STORAGE_DRIVER !== "s3") return undefined;

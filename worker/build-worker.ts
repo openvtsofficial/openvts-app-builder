@@ -1,6 +1,5 @@
 import "dotenv/config";
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
 import { hostname } from "node:os";
 import path from "node:path";
 import { existsSync, readdirSync } from "node:fs";
@@ -12,41 +11,79 @@ import { materializeFlutterProjectFromGit, zipDirectory } from "../src/lib/flutt
 import { createLogger } from "../src/lib/logger";
 import { toStudioProject } from "../src/lib/project-mapper";
 import { storage } from "../src/lib/storage";
+import { configureAndroidSigning } from "../src/lib/android-signing";
+import { runBuildCommand } from "../src/lib/build-command";
+import { prepareGradleHome } from "../src/lib/android-build";
+import { assertHostMemoryHeadroom, HostMemoryError } from "../src/lib/build-resources";
 
 const log = createLogger("build-worker");
 
 const workerId = `${hostname()}-${process.pid}`;
 const once = process.argv.includes("--once");
 let stopping = false;
+let resourceCooldownUntil = 0;
+let resourceWaitLoggedAt = 0;
+let waitingForMemory = false;
+const gradleHome = path.resolve(process.env.GRADLE_USER_HOME || path.join(env.BUILD_WORKSPACE_ROOT, "..", ".gradle"));
 
 function sleep(ms: number) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 async function appendLog(jobId: string, line: string) {
-  const timestamped = `[${new Date().toISOString()}] ${line}`;
-  const existing = await prisma.buildJob.findUnique({ where: { id: jobId }, select: { buildLog: true } });
-  const next = `${existing?.buildLog ?? ""}${timestamped}\n`.slice(-1_000_000);
-  await prisma.buildJob.update({ where: { id: jobId }, data: { buildLog: next } });
+  const timestamped = line.split(/\r?\n/).map((entry) => `[${new Date().toISOString()}] ${entry}\n`).join("");
+  await prisma.$executeRaw`UPDATE "BuildJob" SET "buildLog" = RIGHT(COALESCE("buildLog", '') || ${timestamped}, 1000000) WHERE "id" = ${jobId}`;
 }
 
 async function setProgress(jobId: string, status: BuildStatus, progress: number, currentStage: string, etaSeconds?: number) {
-  await prisma.buildJob.update({ where: { id: jobId }, data: { status, progress, currentStage, etaSeconds, lockedAt: new Date(), lockedBy: workerId } });
+  const updated = await prisma.buildJob.updateMany({ where: { id: jobId, status: { not: "CANCELLED" } }, data: { status, progress, currentStage, etaSeconds: etaSeconds ?? null, lockedAt: new Date(), lockedBy: workerId } });
+  if (!updated.count) throw new Error("Build cancelled by user");
   await appendLog(jobId, currentStage);
 }
 
 async function recoverStaleJobs() {
-  const staleBefore = new Date(Date.now() - env.BUILD_TIMEOUT_MS - 60_000);
-  await prisma.buildJob.updateMany({
+  // Commands refresh their leases every five seconds; Git preparation is bounded
+  // by the clone timeout. Recover interrupted jobs without requiring a restart.
+  const staleBefore = new Date(Date.now() - Math.max(180_000, env.GIT_CLONE_TIMEOUT_MS + 60_000));
+  const interrupted = await prisma.buildJob.findMany({
     where: { status: { in: ["PREPARING", "CUSTOMIZING", "RESOLVING_DEPENDENCIES", "COMPILING", "SIGNING", "UPLOADING"] }, lockedAt: { lt: staleBefore } },
-    data: { status: "QUEUED", progress: 0, currentStage: "Recovered after an interrupted worker", lockedAt: null, lockedBy: null },
+    select: { id: true, attempts: true, maxAttempts: true },
   });
+  for (const job of interrupted) {
+    const exhausted = job.attempts >= job.maxAttempts;
+    await prisma.buildJob.updateMany({
+      where: { id: job.id, lockedAt: { lt: staleBefore }, status: { in: ["PREPARING", "CUSTOMIZING", "RESOLVING_DEPENDENCIES", "COMPILING", "SIGNING", "UPLOADING"] } },
+      data: exhausted
+        ? { status: "FAILED", currentStage: "Worker interrupted; retry limit reached", errorMessage: "Worker interrupted; start a new build", finishedAt: new Date(), lockedAt: null, lockedBy: null }
+        : { status: "QUEUED", progress: 0, currentStage: "Recovered after an interrupted worker", errorMessage: null, lockedAt: null, lockedBy: null },
+    });
+  }
 }
 
 async function claimNextJob() {
+  let nativeCapacity = Date.now() >= resourceCooldownUntil;
+  let capacityMessage = "Waiting for server memory: retry cooling down";
+  if (nativeCapacity) {
+    try { await assertHostMemoryHeadroom(env.BUILD_MIN_HOST_AVAILABLE_MB); }
+    catch (error) {
+      if (!(error instanceof HostMemoryError)) throw error;
+      nativeCapacity = false;
+      capacityMessage = error.message;
+    }
+  }
+  if (!nativeCapacity && (!waitingForMemory || Date.now() - resourceWaitLoggedAt >= 60_000)) {
+    await prisma.buildJob.updateMany({ where: { status: "QUEUED", type: { not: "SOURCE_ZIP" } }, data: { currentStage: capacityMessage, etaSeconds: null } });
+    log.warn(capacityMessage);
+    resourceWaitLoggedAt = Date.now();
+    waitingForMemory = true;
+  } else if (nativeCapacity && waitingForMemory) {
+    await prisma.buildJob.updateMany({ where: { status: "QUEUED", currentStage: { startsWith: "Waiting for server memory" } }, data: { currentStage: "Queued" } });
+    waitingForMemory = false;
+  }
   return prisma.$transaction(async (tx) => {
     const rows = await tx.$queryRawUnsafe<Array<{ id: string }>>(`
       SELECT "id"
       FROM "BuildJob"
       WHERE "status" = 'QUEUED'::"BuildStatus" AND "attempts" < "maxAttempts"
+      ${nativeCapacity ? "" : "AND \"type\" = 'SOURCE_ZIP'::\"BuildType\""}
       ORDER BY "priority" ASC, "createdAt" ASC
       FOR UPDATE SKIP LOCKED
       LIMIT 1
@@ -85,7 +122,8 @@ function buildSpawnEnv() {
     ...process.env,
     CI: "true",
     LANG: "C.UTF-8",
-    GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2 -Dorg.gradle.parallel=false",
+    GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=1 -Dorg.gradle.parallel=false",
+    GRADLE_USER_HOME: gradleHome,
     ...extra,
   };
 }
@@ -96,58 +134,14 @@ async function isCancelled(jobId: string): Promise<boolean> {
 }
 
 async function runCommand(jobId: string, command: string, args: string[], cwd: string, timeout = env.BUILD_TIMEOUT_MS) {
-  await appendLog(jobId, `$ ${command} ${args.join(" ")}`);
-  return new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env: buildSpawnEnv(), stdio: ["ignore", "pipe", "pipe"], shell: true });
-    let settled = false;
-    let buffered = "";
-    let lastActivity = Date.now();
-
-    const consume = (chunk: Buffer) => {
-      lastActivity = Date.now();
-      buffered += chunk.toString("utf8");
-      const lines = buffered.split(/\r?\n/);
-      buffered = lines.pop() ?? "";
-      for (const line of lines.filter(Boolean).slice(-100)) void appendLog(jobId, line.slice(0, 2_000));
-    };
-
-    child.stdout.on("data", consume);
-    child.stderr.on("data", consume);
-
-    const timer = setTimeout(() => { if (!settled) { child.kill("SIGKILL"); reject(new Error(`Command exceeded ${Math.round(timeout / 1000)} seconds`)); } }, timeout);
-
-    const heartbeatInterval = setInterval(async () => {
-      if (await isCancelled(jobId)) {
-        clearInterval(heartbeatInterval);
-        clearTimeout(timer);
-        if (!settled) {
-          settled = true;
-          child.kill("SIGKILL");
-          reject(new Error("Build cancelled by user"));
-        }
-        return;
-      }
-      const silentFor = Date.now() - lastActivity;
-      if (silentFor > 600000) {
-        clearInterval(heartbeatInterval);
-        clearTimeout(timer);
-        if (!settled) {
-          settled = true;
-          child.kill("SIGKILL");
-          reject(new Error(`Build hung - no output for ${Math.round(silentFor / 1000)}s`));
-        }
-      }
-    }, 30000);
-
-    child.on("error", (error) => { if (settled) return; settled = true; clearTimeout(timer); clearInterval(heartbeatInterval); reject(error); });
-    child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      clearInterval(heartbeatInterval);
-      if (buffered.trim()) void appendLog(jobId, buffered.trim().slice(0, 2_000));
-      if (code === 0) resolve(); else reject(new Error(`${command} exited with code ${code}`));
-    });
+  await runBuildCommand({ command, args, cwd, env: buildSpawnEnv(), timeoutMs: timeout, heartbeatMs: 5_000,
+    onLog: (line) => appendLog(jobId, line),
+    onHeartbeat: async () => {
+      if (await isCancelled(jobId)) return true;
+      await assertHostMemoryHeadroom(env.BUILD_CRITICAL_HOST_AVAILABLE_MB);
+      await prisma.buildJob.updateMany({ where: { id: jobId, lockedBy: workerId }, data: { lockedAt: new Date() } });
+      return false;
+    },
   });
 }
 
@@ -158,38 +152,12 @@ async function runCommandWithRetry(jobId: string, command: string, args: string[
       return;
     } catch (error) {
       await appendLog(jobId, `Attempt ${attempt}/${retries} failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (await isCancelled(jobId) || error instanceof HostMemoryError) throw error;
       if (attempt === retries) throw error;
       await appendLog(jobId, `Retrying in 5 seconds...`);
       await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }
-}
-
-async function findFirst(root: string, predicate: (name: string) => boolean): Promise<string | undefined> {
-  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
-  for (const entry of entries) {
-    const absolute = path.join(root, entry.name);
-    if (entry.isDirectory()) { const nested = await findFirst(absolute, predicate); if (nested) return nested; }
-    else if (predicate(entry.name)) return absolute;
-  }
-  return undefined;
-}
-
-function propertyEscape(value: string) { return value.replaceAll("\\", "\\\\").replaceAll(":", "\\:").replaceAll("=", "\\="); }
-
-async function configureSigning(workspace: string) {
-  const keystoreSrc = path.resolve(env.SIGNING_KEYSTORE_PATH);
-  if (!existsSync(keystoreSrc)) return false;
-  const destination = path.join(workspace, "android", "app", "release-key.jks");
-  await writeFile(destination, await readFile(keystoreSrc), { mode: 0o600 });
-  const properties = [
-    `storePassword=${propertyEscape("Open@321Stack")}`,
-    `keyPassword=${propertyEscape("Open@321Stack")}`,
-    `keyAlias=${propertyEscape("open-vts-upload")}`,
-    "storeFile=release-key.jks",
-  ].join("\n");
-  await writeFile(path.join(workspace, "android", "key.properties"), `${properties}\n`, { mode: 0o600 });
-  return true;
 }
 
 async function buildArtifact(job: BuildJob) {
@@ -202,13 +170,6 @@ async function buildArtifact(job: BuildJob) {
   await mkdir(path.dirname(workspace), { recursive: true });
 
   try {
-    // Kill any orphaned Gradle daemons from prior builds to free memory
-    await new Promise<void>((resolve) => {
-      const kill = spawn("pkill", ["-f", "GradleDaemon"], { stdio: "ignore" });
-      kill.on("close", () => resolve());
-      kill.on("error", () => resolve());
-    });
-
     // Step 1: Fetch the latest upstream Flutter project for this build.
     await setProgress(job.id, "PREPARING", 10, `Fetching latest ${env.FLUTTER_TEMPLATE_BRANCH} Flutter base from Git`, 260);
     await appendLog(job.id, `Template repository: ${env.FLUTTER_TEMPLATE_REPOSITORY}`);
@@ -234,45 +195,47 @@ async function buildArtifact(job: BuildJob) {
     });
 
     await appendLog(job.id, `Project customized from ${result.templateSource?.branch}@${result.templateSource?.commit.slice(0, 12)}: package=${project.androidPackageName}, bundle=${project.iosBundleId}, icons=${result.iconAssetsInstalled}`);
+    for (const adjustment of result.sourceAdjustments) await appendLog(job.id, `Compiler compatibility adjustment: ${adjustment}`);
 
     // Step 3: Configure signing (keystore is private builder infrastructure, separate from the public Git template)
-    const needsSigning = ["SIGNED_APK", "RELEASE_AAB"].includes(job.type);
+    const needsSigning = ["RELEASE_APK", "SIGNED_APK", "RELEASE_AAB"].includes(job.type);
     if (needsSigning) {
       await setProgress(job.id, "SIGNING", 32, "Configuring release signing key", 200);
-      const configured = await configureSigning(workspace);
-      if (!configured) throw new Error(`Signing keystore not found at ${path.resolve(env.SIGNING_KEYSTORE_PATH)}`);
+      await configureAndroidSigning(workspace, project.id);
       await appendLog(job.id, `Keystore at: ${path.join(workspace, "android", "app", "release-key.jks")} exists=${existsSync(path.join(workspace, "android", "app", "release-key.jks"))}`);
       await appendLog(job.id, `Key.properties at: ${path.join(workspace, "android", "key.properties")} exists=${existsSync(path.join(workspace, "android", "key.properties"))}`);
       await appendLog(job.id, "Signing key installed");
     }
 
-    // Step 4: Resolve Flutter dependencies
-    await setProgress(job.id, "RESOLVING_DEPENDENCIES", 40, "Running flutter pub get", 180);
-    await runCommandWithRetry(job.id, env.FLUTTER_BIN, ["pub", "get"], workspace, 2, 300_000);
+    // Source exports do not need native tools or dependency resolution.
+    if (job.type !== "SOURCE_ZIP") {
+      await setProgress(job.id, "RESOLVING_DEPENDENCIES", 40, "Running flutter pub get", 180);
+      await runCommandWithRetry(job.id, env.FLUTTER_BIN, ["pub", "get"], workspace, 2, 300_000);
+    }
+    if (await isCancelled(job.id)) throw new Error("Build cancelled by user");
 
     let artifactPath: string;
     if (job.type === "SOURCE_ZIP") {
       // Source ZIP: just package the customized project
       await setProgress(job.id, "COMPILING", 80, "Packaging customized source code archive", 35);
       const zipped = await zipDirectory(workspace);
-      artifactPath = path.join(path.dirname(workspace), `${project.slug}-source.zip`);
+      artifactPath = path.join(workspace, `${project.slug}-source.zip`);
       await writeFile(artifactPath, zipped);
       await appendLog(job.id, `Source archive: ${(zipped.length / 1024 / 1024).toFixed(2)} MB`);
     } else {
       // Build APK or AAB
-      await setProgress(job.id, "COMPILING", 55, `Compiling ${job.type.replaceAll("_", " ").toLowerCase()}`, 150);
+      await setProgress(job.id, "COMPILING", 55, `Compiling ${job.type.replaceAll("_", " ").toLowerCase()}`);
       const command = job.type === "RELEASE_AAB"
         ? ["build", "appbundle", "--release", "--no-tree-shake-icons"]
         : job.type === "DEBUG_APK"
         ? ["build", "apk", "--debug", "--no-tree-shake-icons"]
         : ["build", "apk", "--release", "--no-tree-shake-icons"];
-      await runCommand(job.id, env.FLUTTER_BIN, command, workspace);
+      await runCommand(job.id, env.FLUTTER_BIN, [...command, "--no-pub"], workspace);
 
       const outputRoot = path.join(workspace, "build", "app", "outputs");
       await appendLog(job.id, `Searching for artifact in: ${outputRoot}`);
-      artifactPath = (await findFirst(outputRoot, (name) =>
-        job.type === "RELEASE_AAB" ? name.endsWith(".aab") : name.endsWith(".apk")
-      )) ?? "";
+      const expected = path.join(outputRoot, job.type === "RELEASE_AAB" ? "bundle/release/app-release.aab" : `flutter-apk/app-${job.type === "DEBUG_APK" ? "debug" : "release"}.apk`);
+      artifactPath = existsSync(expected) ? expected : "";
       if (!artifactPath) {
         const files = await readdir(outputRoot).catch(() => [] as string[]);
         await appendLog(job.id, `Output directory contents: ${JSON.stringify(files).slice(0, 500)}`);
@@ -283,6 +246,7 @@ async function buildArtifact(job: BuildJob) {
 
     // Step 5: Upload artifact to storage
     await setProgress(job.id, "UPLOADING", 92, "Uploading artifact to storage", 15);
+    if (await isCancelled(job.id)) throw new Error("Build cancelled by user");
     const artifact = await readFile(artifactPath);
     const extension = job.type === "RELEASE_AAB" ? "aab" : job.type === "SOURCE_ZIP" ? "zip" : "apk";
     const artifactKey = `${projectRecord.ownerId}/${projectRecord.id}/builds/${job.id}/${project.slug}.${extension}`;
@@ -307,6 +271,12 @@ async function fail(job: BuildJob, error: unknown) {
     await prisma.project.update({ where: { id: job.projectId }, data: { status: "DRAFT" } });
     return;
   }
+  if (error instanceof HostMemoryError && job.attempts < job.maxAttempts) {
+    resourceCooldownUntil = Date.now() + 60_000;
+    await prisma.buildJob.update({ where: { id: job.id }, data: { status: "QUEUED", progress: 0, currentStage: message, errorMessage: null, etaSeconds: null, startedAt: null, finishedAt: null, lockedAt: null, lockedBy: null } });
+    await appendLog(job.id, `${message}; retry deferred for at least 60 seconds`);
+    return;
+  }
   await prisma.$transaction([
     prisma.buildJob.update({ where: { id: job.id }, data: { status: "FAILED", currentStage: "Build failed", errorMessage: message, etaSeconds: null, finishedAt: new Date(), lockedAt: null, lockedBy: null } }),
     prisma.project.update({ where: { id: job.projectId }, data: { status: "FAILED" } }),
@@ -324,15 +294,26 @@ async function main() {
   log.info(`Build timeout: ${env.BUILD_TIMEOUT_MS}ms`);
 
   await recoverStaleJobs();
+  await prepareGradleHome(gradleHome, env.GRADLE_JVM_ARGS);
   process.on("SIGTERM", () => { stopping = true; log.info("SIGTERM received, finishing current job..."); });
   process.on("SIGINT", () => { stopping = true; log.info("SIGINT received, finishing current job..."); });
 
+  let lastRecovery = Date.now();
   do {
+    if (Date.now() - lastRecovery > 30_000) {
+      await recoverStaleJobs();
+      lastRecovery = Date.now();
+    }
     const job = await claimNextJob();
     if (!job) { if (once) break; await sleep(env.BUILD_POLL_INTERVAL_MS); continue; }
     log.info(`Processing job ${job.id} (type=${job.type}, project=${job.projectId})`);
     try { await buildArtifact(job); log.info(`Job ${job.id} completed successfully`); }
-    catch (error) { await fail(job, error); log.error(`Job ${job.id} failed: ${error instanceof Error ? error.message : String(error)}`); }
+    catch (error) {
+      await fail(job, error);
+      const message = `Job ${job.id}: ${error instanceof Error ? error.message : String(error)}`;
+      if (error instanceof HostMemoryError && job.attempts < job.maxAttempts) log.warn(message);
+      else log.error(message);
+    }
   } while (!stopping && !once);
 
   log.info("Shutting down");

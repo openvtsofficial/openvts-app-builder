@@ -112,19 +112,19 @@ async function assertFlutterTemplate(root: string) {
   const required = ["pubspec.yaml", "android", "ios", "lib"];
   for (const entry of required) {
     try {
-      await access(path.join(root, entry));
+      await access(path.join(/* turbopackIgnore: true */ root, entry));
     } catch {
       throw new Error(`Git template is not a compatible Flutter application: missing ${entry}`);
     }
   }
 
-  const pubspec = await readFile(path.join(root, "pubspec.yaml"), "utf8");
+  const pubspec = await readFile(path.join(/* turbopackIgnore: true */ root, "pubspec.yaml"), "utf8");
   if (!/^name:\s*[a-zA-Z0-9_]+\s*$/m.test(pubspec)) {
     throw new Error("Git template pubspec.yaml does not contain a valid Flutter package name");
   }
 
-  const androidApp = path.join(root, "android", "app");
-  const iosRunner = path.join(root, "ios", "Runner");
+  const androidApp = path.join(/* turbopackIgnore: true */ root, "android", "app");
+  const iosRunner = path.join(/* turbopackIgnore: true */ root, "ios", "Runner");
   if (!(await stat(androidApp).catch(() => undefined))?.isDirectory()) {
     throw new Error("Git template is missing android/app");
   }
@@ -163,9 +163,9 @@ export async function checkoutFlutterTemplate({
     const committedAt = await runGit({ gitBin, args: ["show", "-s", "--format=%cI", "HEAD"], cwd: outputRoot, timeoutMs: 30_000 }).catch(() => "");
 
     // Generated applications should be clean source trees, not shallow clones of the upstream repository.
-    await rm(path.join(outputRoot, ".git"), { recursive: true, force: true });
+    await rm(path.join(/* turbopackIgnore: true */ outputRoot, ".git"), { recursive: true, force: true });
 
-    await onLog?.(`Using Flutter base commit ${commit.slice(0, 12)}`);
+    await onLog?.(`Using Flutter base commit ${commit}`);
     return {
       provider: "git",
       repository: repositoryLabel,

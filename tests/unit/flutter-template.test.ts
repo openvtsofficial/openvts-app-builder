@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { materializeFlutterProject, zipDirectory } from "../../src/lib/flutter-template";
+import { customizeFlutterProject, zipDirectory } from "../../src/lib/flutter-template";
 import type { StudioProject } from "../../src/lib/types";
+import { createFlutterFixture } from "../fixtures/flutter-project";
+import JSZip from "jszip";
 
 const project: StudioProject = {
   id: "test-project",
@@ -27,8 +29,9 @@ test("materializes a safe cross-platform Flutter source tree", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "studio-template-test-"));
   try {
     const output = path.join(root, "app");
+    await createFlutterFixture(output);
     const icons = await readFile("tests/fixtures/icon-kitchen-sample.zip");
-    const result = await materializeFlutterProject({ project, templateRoot: path.resolve("templates/flutter_base"), outputRoot: output, iconArchive: icons });
+    const result = await customizeFlutterProject({ project, outputRoot: output, iconArchive: icons });
     assert.ok(result.iconAssetsInstalled > 40);
 
     // Android: package name replaced in build.gradle.kts
@@ -36,6 +39,10 @@ test("materializes a safe cross-platform Flutter source tree", async () => {
     assert.match(gradle, /namespace = "com\.northstar\.fleet"/);
     assert.match(gradle, /applicationId = "com\.northstar\.fleet"/);
     assert.doesNotMatch(gradle, /com\.openvts\.app/);
+    assert.ok(gradle.indexOf('plugins {') < gradle.indexOf('val keystorePropertiesFile'));
+    const properties = await readFile(path.join(output, "android/gradle.properties"), "utf8");
+    assert.doesNotMatch(properties, /org.gradle.java.home|-Xmx8G/);
+    assert.match(properties, /kotlin.compiler.execution.strategy=in-process/);
 
     // Android: MainActivity.kt relocated to new package directory
     const activity = await readFile(path.join(output, "android/app/src/main/kotlin/com/northstar/fleet/MainActivity.kt"), "utf8");
@@ -85,7 +92,13 @@ test("materializes a safe cross-platform Flutter source tree", async () => {
 
     // Zip works
     const archive = await zipDirectory(output);
-    assert.ok(archive.length > 500_000);
+    assert.ok(archive.length > 1000);
+    await writeFile(path.join(output, "android/app/private.jks"), "never export a key");
+    await writeFile(path.join(output, "android/key.properties"), "storePassword=secret");
+    const zip = await JSZip.loadAsync(await zipDirectory(output));
+    assert.equal(zip.file("android/app/private.jks"), null);
+    assert.equal(zip.file("android/key.properties"), null);
+    assert.equal((zip.file("android/gradlew")?.unixPermissions as number) & 0o777, 0o755);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

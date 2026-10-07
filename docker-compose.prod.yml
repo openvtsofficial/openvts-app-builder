@@ -1,36 +1,38 @@
 services:
   app:
-    build: .
-    image: ${DOCKER_IMAGE:-ghcr.io/openvtsofficial/openvts-app-builder:latest}
+    image: ${DOCKER_IMAGE:?Set the tested deployment image}
     container_name: studio-openvts
     restart: unless-stopped
     ports:
-      - "8082:3000"
+      - "127.0.0.1:8082:3000"
     environment:
-      DATABASE_URL: postgresql://studio_app:StudioApp321@openvts-postgres:5432/openvts_app_studio?schema=public
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
       AUTH_SECRET: ${AUTH_SECRET}
       AUTH_GOOGLE_ID: ${AUTH_GOOGLE_ID}
       AUTH_GOOGLE_SECRET: ${AUTH_GOOGLE_SECRET}
       AUTH_URL: https://studio.openvts.io
       NEXTAUTH_URL: https://studio.openvts.io
-      SIGNING_ENCRYPTION_KEY: ${SIGNING_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      SIGNING_ENCRYPTION_KEY: ${SIGNING_ENCRYPTION_KEY:?Set SIGNING_ENCRYPTION_KEY}
+      SIGNING_KEYSTORE_PATH: /app/signing/application-key.jks
       NEXT_PUBLIC_DEMO_MODE: "false"
       NEXT_PUBLIC_APP_URL: https://studio.openvts.io
       NODE_ENV: production
       STORAGE_DRIVER: local
       LOCAL_STORAGE_ROOT: /app/data
-      FLUTTER_TEMPLATE_ROOT: /app/templates/flutter_base
+      FLUTTER_TEMPLATE_REPOSITORY: https://github.com/openvtsofficial/openvts-application.git
+      FLUTTER_TEMPLATE_BRANCH: main
       BUILD_WORKSPACE_ROOT: /app/data/workspaces
       BUILD_ARTIFACT_ROOT: /app/data/artifacts
       FLUTTER_BIN: /opt/flutter/bin/flutter
       BUILD_POLL_INTERVAL_MS: "3000"
-      BUILD_TIMEOUT_MS: "1800000"
+      BUILD_TIMEOUT_MS: "3600000"
       LOGGER_ENABLED: "true"
       LOGGER_LEVEL: "info"
       LOG_FILE_PATH: /app/data/logs/app.log
       DISABLE_EMBEDDED_WORKER: "true"
     volumes:
       - studio-data:/app/data
+      - ./signing:/app/signing:ro
     networks:
       - compose_openvts
     deploy:
@@ -40,43 +42,61 @@ services:
           cpus: "1.0"
 
   worker:
-    build: .
-    image: ${DOCKER_IMAGE:-ghcr.io/openvtsofficial/openvts-app-builder:latest}
+    image: ${DOCKER_IMAGE:?Set the tested deployment image}
     container_name: studio-worker
     restart: unless-stopped
-    stop_grace_period: 30s
+    stop_grace_period: 70m
+    init: true
+    pids_limit: 512
+    oom_score_adj: 500
+    healthcheck:
+      disable: true
     command: ["node", "--import=tsx", "worker/build-worker.ts"]
     environment:
-      DATABASE_URL: postgresql://studio_app:StudioApp321@openvts-postgres:5432/openvts_app_studio?schema=public
-      SIGNING_ENCRYPTION_KEY: ${SIGNING_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      SIGNING_ENCRYPTION_KEY: ${SIGNING_ENCRYPTION_KEY:?Set SIGNING_ENCRYPTION_KEY}
+      SIGNING_KEYSTORE_PATH: /app/signing/application-key.jks
+      SIGNING_KEY_ALIAS: ${SIGNING_KEY_ALIAS:?Set SIGNING_KEY_ALIAS}
+      SIGNING_STORE_PASSWORD: ${SIGNING_STORE_PASSWORD:?Set SIGNING_STORE_PASSWORD}
+      SIGNING_KEY_PASSWORD: ${SIGNING_KEY_PASSWORD:-${SIGNING_STORE_PASSWORD}}
       STORAGE_DRIVER: local
       LOCAL_STORAGE_ROOT: /app/data
-      FLUTTER_TEMPLATE_ROOT: /app/templates/flutter_base
+      FLUTTER_TEMPLATE_REPOSITORY: https://github.com/openvtsofficial/openvts-application.git
+      FLUTTER_TEMPLATE_BRANCH: main
       BUILD_WORKSPACE_ROOT: /app/data/workspaces
       BUILD_ARTIFACT_ROOT: /app/data/artifacts
       FLUTTER_BIN: /opt/flutter/bin/flutter
       BUILD_POLL_INTERVAL_MS: "5000"
-      BUILD_TIMEOUT_MS: "1800000"
+      BUILD_TIMEOUT_MS: "3600000"
+      BUILD_MIN_HOST_AVAILABLE_MB: "3200"
+      BUILD_CRITICAL_HOST_AVAILABLE_MB: "512"
       LOGGER_ENABLED: "true"
       LOGGER_LEVEL: "info"
       LOG_FILE_PATH: /app/data/logs/worker.log
       GRADLE_USER_HOME: /app/data/.gradle
+      PUB_CACHE: /app/data/.pub-cache
+      GRADLE_JVM_ARGS: "-Xmx768m -XX:MaxMetaspaceSize=320m -XX:ReservedCodeCacheSize=96m -XX:+UseG1GC -XX:G1PeriodicGCInterval=10000 -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=20 -XX:+HeapDumpOnOutOfMemoryError"
+      NEXT_PUBLIC_DEMO_MODE: "false"
       NODE_ENV: production
     volumes:
       - studio-data:/app/data
+      - ./signing:/app/signing:ro
     networks:
       - compose_openvts
     deploy:
       resources:
         limits:
-          memory: 5G
+          memory: 3500M
           cpus: "2.0"
+          pids: 512
         reservations:
-          memory: 2G
+          memory: 1G
           cpus: "1.0"
 
 volumes:
   studio-data:
+    external: true
+    name: app_studio-data
 
 networks:
   compose_openvts:

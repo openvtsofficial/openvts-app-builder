@@ -36,21 +36,27 @@ services:
       AUTH_GOOGLE_SECRET: ${AUTH_GOOGLE_SECRET}
       AUTH_URL: https://studio.openvts.io
       SIGNING_ENCRYPTION_KEY: ${SIGNING_ENCRYPTION_KEY}
+      SIGNING_KEY_ALIAS: ${SIGNING_KEY_ALIAS}
+      SIGNING_STORE_PASSWORD: ${SIGNING_STORE_PASSWORD}
+      SIGNING_KEY_PASSWORD: ${SIGNING_KEY_PASSWORD}
       NEXT_PUBLIC_DEMO_MODE: "false"
       NEXT_PUBLIC_APP_URL: https://studio.openvts.io
       STORAGE_DRIVER: local
       LOCAL_STORAGE_ROOT: /app/data
-      FLUTTER_TEMPLATE_ROOT: /app/templates/flutter_base
+      FLUTTER_TEMPLATE_REPOSITORY: https://github.com/openvtsofficial/openvts-application.git
+      FLUTTER_TEMPLATE_BRANCH: main
+      SIGNING_KEYSTORE_PATH: /app/signing/application-key.jks
       BUILD_WORKSPACE_ROOT: /app/data/workspaces
       BUILD_ARTIFACT_ROOT: /app/data/artifacts
       FLUTTER_BIN: /opt/flutter/bin/flutter
       BUILD_POLL_INTERVAL_MS: "3000"
-      BUILD_TIMEOUT_MS: "1200000"
+      BUILD_TIMEOUT_MS: "3600000"
       LOGGER_ENABLED: "true"
       LOGGER_LEVEL: "info"
       LOG_FILE_PATH: /app/data/logs/app.log
     volumes:
       - appdata:/app/data
+      - ./signing:/app/signing:ro
     ports:
       - "${APP_PORT:-3000}:3000"
     deploy:
@@ -71,27 +77,41 @@ services:
       db:
         condition: service_healthy
     command: ["node", "--import=tsx", "worker/build-worker.ts"]
+    init: true
+    pids_limit: 512
+    healthcheck:
+      disable: true
     environment:
       DATABASE_URL: postgresql://openvts:${POSTGRES_PASSWORD:-openvts}@db:5432/openvts_app_studio
       SIGNING_ENCRYPTION_KEY: ${SIGNING_ENCRYPTION_KEY}
+      SIGNING_KEY_ALIAS: ${SIGNING_KEY_ALIAS}
+      SIGNING_STORE_PASSWORD: ${SIGNING_STORE_PASSWORD}
+      SIGNING_KEY_PASSWORD: ${SIGNING_KEY_PASSWORD}
       STORAGE_DRIVER: local
       LOCAL_STORAGE_ROOT: /app/data
-      FLUTTER_TEMPLATE_ROOT: /app/templates/flutter_base
+      FLUTTER_TEMPLATE_REPOSITORY: https://github.com/openvtsofficial/openvts-application.git
+      FLUTTER_TEMPLATE_BRANCH: main
+      SIGNING_KEYSTORE_PATH: /app/signing/application-key.jks
       BUILD_WORKSPACE_ROOT: /app/data/workspaces
       BUILD_ARTIFACT_ROOT: /app/data/artifacts
       FLUTTER_BIN: /opt/flutter/bin/flutter
       BUILD_POLL_INTERVAL_MS: "5000"
-      BUILD_TIMEOUT_MS: "1200000"
+      BUILD_TIMEOUT_MS: "3600000"
       LOGGER_ENABLED: "true"
       LOGGER_LEVEL: "info"
       LOG_FILE_PATH: /app/data/logs/worker.log
+      GRADLE_USER_HOME: /app/data/.gradle
+      PUB_CACHE: /app/data/.pub-cache
+      GRADLE_JVM_ARGS: "-Xmx1024m -XX:MaxMetaspaceSize=384m -XX:ReservedCodeCacheSize=128m -XX:+HeapDumpOnOutOfMemoryError"
     volumes:
       - appdata:/app/data
+      - ./signing:/app/signing:ro
     deploy:
       resources:
         limits:
-          memory: 3G
+          memory: 3500M
           cpus: "2.0"
+          pids: 512
         reservations:
           memory: 1G
           cpus: "0.5"

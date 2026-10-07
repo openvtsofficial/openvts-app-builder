@@ -3,6 +3,7 @@ import { requireUserId, errorResponse } from "@/lib/api";
 import { prisma } from "@/lib/db";
 import { toStudioProject } from "@/lib/project-mapper";
 import { projectSchema, slugify } from "@/lib/validation";
+import { env } from "@/lib/env";
 
 export async function GET() {
   try {
@@ -19,7 +20,7 @@ export async function POST(request: Request) {
     const slug = `${slugify(input.name)}-${randomBytes(2).toString("hex")}`;
     const project = await prisma.$transaction(async (tx) => {
       const created = await tx.project.create({ data: { ownerId, slug, ...input }, include: { assets: true } });
-      await tx.auditLog.create({ data: { actorId: ownerId, projectId: created.id, action: "project.created", entityType: "Project", entityId: created.id } });
+      await tx.auditLog.create({ data: { actorId: ownerId, projectId: created.id, action: "project.created", entityType: "Project", entityId: created.id, metadata: { templateRepository: env.FLUTTER_TEMPLATE_REPOSITORY, templateBranch: env.FLUTTER_TEMPLATE_BRANCH } } });
       return created;
     });
     return Response.json({ project: toStudioProject(project) }, { status: 201 });

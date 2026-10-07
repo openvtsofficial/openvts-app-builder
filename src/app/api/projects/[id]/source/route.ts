@@ -26,7 +26,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       ...raw,
       ...input,
       id,
-      slug: raw.slug || slugify(input.name),
+      // The client must never choose the filesystem checkout destination.
+      slug: persisted?.slug || slugify(input.name) || "application",
       status: raw.status || "DRAFT",
       templateVersion: raw.templateVersion || "1.0.0",
       createdAt: raw.createdAt || new Date().toISOString(),
@@ -36,8 +37,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (persisted?.logoDarkKey) project.logoDarkUrl = `data:image/png;base64,${(await storage.get(persisted.logoDarkKey)).toString("base64")}`;
     const icons = form.get("icons");
     const iconBuffer = icons instanceof File ? Buffer.from(await icons.arrayBuffer()) : persisted?.iconArchiveKey ? await storage.get(persisted.iconArchiveKey) : undefined;
-    temporary = await mkdtemp(path.join(os.tmpdir(), "openvts-source-"));
-    const outputRoot = path.join(temporary, project.slug);
+    temporary = await mkdtemp(path.join(/* turbopackIgnore: true */ os.tmpdir(), "openvts-source-"));
+    const outputRoot = path.join(/* turbopackIgnore: true */ temporary, project.slug);
     await materializeFlutterProjectFromGit({
       project,
       repository: env.FLUTTER_TEMPLATE_REPOSITORY,

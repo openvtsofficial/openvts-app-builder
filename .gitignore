@@ -10,11 +10,14 @@
 
 # production
 /build
+/.deploy-state/
 
 # local data and build artifacts
 /data/uploads/*
 /data/artifacts/*
 /data/workspaces/*
+/data/.gradle/
+/data/.pub-cache/
 !/data/uploads/.gitkeep
 !/data/artifacts/.gitkeep
 !/data/workspaces/.gitkeep
@@ -22,13 +25,12 @@
 # environment and secrets
 .env
 .env.local
-.env.*.local
+.env.*
 !.env.example
 *.jks
 *.keystore
 *.p12
 *.mobileprovision
-!/signing/application-key.jks
 
 # logs and editor files
 npm-debug.log*
@@ -40,8 +42,8 @@ yarn-error.log*
 .idea
 .vscode
 
-# extracted Flutter template (regenerated from base-code.zip via npm run setup)
-/templates/flutter_base
+# Legacy extracted files are excluded; application source comes from GitHub.
+/templates
 
 # generated Prisma client
 /src/generated/prisma

@@ -1,22 +1,19 @@
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { errorResponse, requireUserId } from "@/lib/api";
+import { ApiError, errorResponse, requireOwnedProject, requireUserId } from "@/lib/api";
+import { signingKeyForProject } from "@/lib/android-signing";
 
-export async function GET() {
+export const runtime = "nodejs";
+
+export async function GET(request: Request) {
   try {
-    await requireUserId();
+    const ownerId = await requireUserId();
+    const projectId = new URL(request.url).searchParams.get("projectId") ?? undefined;
+    if (projectId) await requireOwnedProject(projectId, ownerId);
+    const keystore = await signingKeyForProject(projectId).then((key) => key.bytes).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") throw new ApiError(404, "Release keystore is not configured");
+      throw error;
+    });
 
-    // Path to the bundled keystore in the container
-    const keystorePath = path.resolve(process.cwd(), "signing", "application-key.jks");
-
-    if (!existsSync(keystorePath)) {
-      return Response.json({ error: "Keystore file not found" }, { status: 404 });
-    }
-
-    const keystore = await readFile(keystorePath);
-
-    return new Response(keystore, {
+    return new Response(new Uint8Array(keystore), {
       headers: {
         "Content-Type": "application/octet-stream",
         "Content-Disposition": 'attachment; filename="application-key.jks"',

@@ -6,6 +6,8 @@ import { canonicalIconPath, recognizedIconPrefixes } from "@/lib/icon-kitchen";
 import type { StudioProject } from "@/lib/types";
 import { checkoutFlutterTemplate, type GitTemplateSource } from "@/lib/flutter-template-source";
 import { androidPackageRegex, iosBundleRegex } from "@/lib/validation";
+import { androidBuildProperties } from "@/lib/android-build";
+import { prepareFlutterCompatibility } from "@/lib/flutter-compatibility";
 
 const BASE_PACKAGE = "com.openvts.app";
 const BASE_APP_LABEL = "Open VTS";
@@ -32,7 +34,7 @@ function pubspecName(packageName: string) {
 async function walk(root: string): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true });
   const files = await Promise.all(entries.map(async (entry) => {
-    const absolute = path.join(root, entry.name);
+    const absolute = path.join(/* turbopackIgnore: true */ root, entry.name);
     return entry.isDirectory() ? walk(absolute) : [absolute];
   }));
   return files.flat();
@@ -120,26 +122,26 @@ async function replaceInTextFiles(root: string, project: StudioProject) {
 }
 
 async function relocateMainActivity(outputRoot: string, packageName: string) {
-  const kotlinRoot = path.join(outputRoot, "android", "app", "src", "main", "kotlin");
-  const oldPath = path.join(kotlinRoot, ...BASE_PACKAGE.split("."));
-  const newPath = path.join(kotlinRoot, ...packageName.split("."));
+  const kotlinRoot = path.join(/* turbopackIgnore: true */ outputRoot, "android", "app", "src", "main", "kotlin");
+  const oldPath = path.join(/* turbopackIgnore: true */ kotlinRoot, ...BASE_PACKAGE.split("."));
+  const newPath = path.join(/* turbopackIgnore: true */ kotlinRoot, ...packageName.split("."));
 
   if (oldPath === newPath) return;
 
-  const mainActivityFile = path.join(oldPath, "MainActivity.kt");
+  const mainActivityFile = path.join(/* turbopackIgnore: true */ oldPath, "MainActivity.kt");
   const mainActivityExists = await stat(mainActivityFile).then(() => true).catch(() => false);
 
   if (mainActivityExists) {
     let content = await readFile(mainActivityFile, "utf8");
     content = content.replace(`package ${BASE_PACKAGE}`, `package ${packageName}`);
     await mkdir(newPath, { recursive: true });
-    await writeFile(path.join(newPath, "MainActivity.kt"), content, "utf8");
+    await writeFile(path.join(/* turbopackIgnore: true */ newPath, "MainActivity.kt"), content, "utf8");
     await rm(oldPath, { recursive: true, force: true });
 
     // Clean up empty parent directories from the old package path
     const oldParts = BASE_PACKAGE.split(".");
     for (let i = oldParts.length - 1; i >= 0; i--) {
-      const parent = path.join(kotlinRoot, ...oldParts.slice(0, i + 1));
+      const parent = path.join(/* turbopackIgnore: true */ kotlinRoot, ...oldParts.slice(0, i + 1));
       const entries = await readdir(parent).catch(() => null);
       if (entries && entries.length === 0) {
         await rm(parent, { recursive: true, force: true });
@@ -163,16 +165,16 @@ async function defaultLogo(project: StudioProject) {
 }
 
 async function writeBrandingAssets(outputRoot: string, project: StudioProject) {
-  const brandRoot = path.join(outputRoot, "assets", "brand");
+  const brandRoot = path.join(/* turbopackIgnore: true */ outputRoot, "assets", "brand");
   await mkdir(brandRoot, { recursive: true });
   const fallback = await defaultLogo(project);
   const light = decodeDataUrl(project.logoLightUrl) ?? fallback;
   const dark = decodeDataUrl(project.logoDarkUrl) ?? light;
   await Promise.all([
-    sharp(light, { limitInputPixels: 16_777_216 }).resize(512, 512, { fit: "inside", withoutEnlargement: true }).png().toFile(path.join(brandRoot, "logo.png")),
-    sharp(dark, { limitInputPixels: 16_777_216 }).resize(512, 512, { fit: "inside", withoutEnlargement: true }).png().toFile(path.join(brandRoot, "dark-logo.png")),
-    sharp(light, { limitInputPixels: 16_777_216 }).resize(192, 192, { fit: "inside", withoutEnlargement: true }).png().toFile(path.join(brandRoot, "icon.png")),
-    sharp(dark, { limitInputPixels: 16_777_216 }).resize(192, 192, { fit: "inside", withoutEnlargement: true }).png().toFile(path.join(brandRoot, "dark-icon.png")),
+    sharp(light, { limitInputPixels: 16_777_216 }).resize(512, 512, { fit: "inside", withoutEnlargement: true }).png().toFile(path.join(/* turbopackIgnore: true */ brandRoot, "logo.png")),
+    sharp(dark, { limitInputPixels: 16_777_216 }).resize(512, 512, { fit: "inside", withoutEnlargement: true }).png().toFile(path.join(/* turbopackIgnore: true */ brandRoot, "dark-logo.png")),
+    sharp(light, { limitInputPixels: 16_777_216 }).resize(192, 192, { fit: "inside", withoutEnlargement: true }).png().toFile(path.join(/* turbopackIgnore: true */ brandRoot, "icon.png")),
+    sharp(dark, { limitInputPixels: 16_777_216 }).resize(192, 192, { fit: "inside", withoutEnlargement: true }).png().toFile(path.join(/* turbopackIgnore: true */ brandRoot, "dark-icon.png")),
   ]);
 }
 
@@ -193,14 +195,14 @@ export async function installIconKitchenArchive(outputRoot: string, archive?: Bu
     const canonical = safeRelativeIconPath(originalPath);
     if (!canonical) continue;
     let destination: string | undefined;
-    if (canonical.toLowerCase().startsWith("android/res/")) destination = path.join(outputRoot, "android", "app", "src", "main", "res", canonical.slice("android/res/".length));
-    else if (canonical.toLowerCase().startsWith("android/") && canonical.toLowerCase().endsWith("play_store_512.png")) destination = path.join(outputRoot, "android", "app", "src", "main", "res", "mipmap-xxxhdpi", "play_store_512.png");
-    else if (canonical.toLowerCase().startsWith("ios/")) destination = path.join(outputRoot, "ios", "Runner", "Assets.xcassets", "AppIcon.appiconset", canonical.slice("ios/".length));
-    else if (canonical.toLowerCase() === "web/favicon.ico") destination = path.join(outputRoot, "web", "favicon.ico");
-    else if (canonical.toLowerCase() === "web/icon-192.png") destination = path.join(outputRoot, "web", "icons", "Icon-192.png");
-    else if (canonical.toLowerCase() === "web/icon-512.png") destination = path.join(outputRoot, "web", "icons", "Icon-512.png");
-    else if (canonical.toLowerCase() === "web/icon-192-maskable.png") destination = path.join(outputRoot, "web", "icons", "Icon-maskable-192.png");
-    else if (canonical.toLowerCase() === "web/icon-512-maskable.png") destination = path.join(outputRoot, "web", "icons", "Icon-maskable-512.png");
+    if (canonical.toLowerCase().startsWith("android/res/")) destination = path.join(/* turbopackIgnore: true */ outputRoot, "android", "app", "src", "main", "res", canonical.slice("android/res/".length));
+    else if (canonical.toLowerCase().startsWith("android/") && canonical.toLowerCase().endsWith("play_store_512.png")) destination = path.join(/* turbopackIgnore: true */ outputRoot, "android", "app", "src", "main", "res", "mipmap-xxxhdpi", "play_store_512.png");
+    else if (canonical.toLowerCase().startsWith("ios/")) destination = path.join(/* turbopackIgnore: true */ outputRoot, "ios", "Runner", "Assets.xcassets", "AppIcon.appiconset", canonical.slice("ios/".length));
+    else if (canonical.toLowerCase() === "web/favicon.ico") destination = path.join(/* turbopackIgnore: true */ outputRoot, "web", "favicon.ico");
+    else if (canonical.toLowerCase() === "web/icon-192.png") destination = path.join(/* turbopackIgnore: true */ outputRoot, "web", "icons", "Icon-192.png");
+    else if (canonical.toLowerCase() === "web/icon-512.png") destination = path.join(/* turbopackIgnore: true */ outputRoot, "web", "icons", "Icon-512.png");
+    else if (canonical.toLowerCase() === "web/icon-192-maskable.png") destination = path.join(/* turbopackIgnore: true */ outputRoot, "web", "icons", "Icon-maskable-192.png");
+    else if (canonical.toLowerCase() === "web/icon-512-maskable.png") destination = path.join(/* turbopackIgnore: true */ outputRoot, "web", "icons", "Icon-maskable-512.png");
     if (!destination) continue;
     await mkdir(path.dirname(destination), { recursive: true });
     await writeFile(destination, await entry.async("nodebuffer"));
@@ -219,21 +221,21 @@ async function assertCustomizedProject(outputRoot: string, project: StudioProjec
   ];
 
   for (const check of checks) {
-    const absolute = path.join(outputRoot, check.relative);
-    const contents = await readFile(absolute, "utf8").catch(() => undefined);
+    const absolute = path.join(/* turbopackIgnore: true */ outputRoot, check.relative);
+    const contents = await readFile(/* turbopackIgnore: true */ absolute, "utf8").catch(() => undefined);
     if (!contents || !contents.includes(check.expected)) {
       throw new Error(`The upstream Flutter template contract changed: ${check.label} could not be applied in ${check.relative}`);
     }
   }
 
-  const activity = path.join(outputRoot, "android", "app", "src", "main", "kotlin", ...project.androidPackageName.split("."), "MainActivity.kt");
+  const activity = path.join(/* turbopackIgnore: true */ outputRoot, "android", "app", "src", "main", "kotlin", ...project.androidPackageName.split("."), "MainActivity.kt");
   if (!(await stat(activity).catch(() => undefined))?.isFile()) {
     throw new Error("The upstream Flutter template contract changed: MainActivity.kt could not be relocated to the configured Android package");
   }
 }
 
 async function configureSigningBuildGradle(outputRoot: string) {
-  const gradlePath = path.join(outputRoot, "android", "app", "build.gradle.kts");
+  const gradlePath = path.join(/* turbopackIgnore: true */ outputRoot, "android", "app", "build.gradle.kts");
   let content = await readFile(gradlePath, "utf8");
 
   if (content.includes("key.properties")) return;
@@ -248,8 +250,9 @@ if (keystorePropertiesFile.exists()) {
 
 `;
 
-  // Insert the import + properties before plugins block
-  content = importAndProperties + content;
+  // Gradle requires plugins before executable statements.
+  content = content.replace(/(plugins\s*\{[\s\S]*?\n\})/, `$1\n\n${importAndProperties.replace("import java.util.Properties\n", "")}`);
+  content = "import java.util.Properties\n" + content;
 
   // Add signingConfigs inside the android block, and update buildTypes
   content = content.replace(
@@ -288,22 +291,14 @@ export async function customizeFlutterProject({ project, outputRoot, iconArchive
   await mkdir(outputRoot, { recursive: true });
 
   // Remove build output if the upstream repository contains local/generated files.
-  const buildDir = [outputRoot, "build"].join(path.sep);
-  await rm(buildDir, { recursive: true, force: true });
+  for (const relative of ["build", ".dart_tool", "android/.gradle", "android/local.properties", "android/key.properties", "android/app/release-key.jks", "assets/application-key.jks"]) {
+    await rm(path.join(/* turbopackIgnore: true */ outputRoot, relative), { recursive: true, force: true });
+  }
 
   // Step 1b: Sanitize gradle.properties for Linux build environment
-  const gradleProps = path.join(outputRoot, "android", "gradle.properties");
+  const gradleProps = path.join(/* turbopackIgnore: true */ outputRoot, "android", "gradle.properties");
   const propsContent = await readFile(gradleProps, "utf8").catch(() => "");
-  if (propsContent) {
-    const sanitized = propsContent
-      .split("\n")
-      .filter((line) => !line.trim().startsWith("org.gradle.java.home"))
-      .join("\n")
-      .replace(/-Xmx\d+G/, "-Xmx2G")
-      .replace(/-XX:MaxMetaspaceSize=\d+G/, "-XX:MaxMetaspaceSize=1G")
-      .replace(/-XX:ReservedCodeCacheSize=\d+m/, "-XX:ReservedCodeCacheSize=256m");
-    await writeFile(gradleProps, sanitized, "utf8");
-  }
+  await writeFile(gradleProps, androidBuildProperties(propsContent, process.env.GRADLE_JVM_ARGS), "utf8");
 
   // Step 2: Replace hardcoded values with user's configuration
   await replaceInTextFiles(outputRoot, project);
@@ -321,18 +316,21 @@ export async function customizeFlutterProject({ project, outputRoot, iconArchive
   await configureSigningBuildGradle(outputRoot);
 
   // Step 7: Create .env file with the configured API base URL
-  const envPath = path.join(outputRoot, ".env");
+  const envPath = path.join(/* turbopackIgnore: true */ outputRoot, ".env");
   await writeFile(envPath, `# Runtime environment\nAPI_BASE_URL=${project.apiBaseUrl}\n`, "utf8");
 
   // Step 8: Fail loudly if a future upstream change breaks the customization contract.
   await assertCustomizedProject(outputRoot, project);
 
+  const sourceAdjustments = await prepareFlutterCompatibility(outputRoot);
+
   // Step 9: Write manifest for traceability
-  await writeFile(path.join(outputRoot, "studio-manifest.json"), JSON.stringify({
+  await writeFile(path.join(/* turbopackIgnore: true */ outputRoot, "studio-manifest.json"), JSON.stringify({
     schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     templateVersion: project.templateVersion,
     templateSource,
+    sourceAdjustments,
     project: {
       name: project.name,
       androidApplicationName: project.androidApplicationName,
@@ -345,44 +343,7 @@ export async function customizeFlutterProject({ project, outputRoot, iconArchive
     iconAssetsInstalled: icons.installed,
   }, null, 2));
 
-  return { outputRoot, iconAssetsInstalled: icons.installed, templateSource };
-}
-
-async function copyDirectory(src: string, dest: string) {
-  await mkdir(dest, { recursive: true });
-  const entries = await readdir(src, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const srcPath = path.join(src, entry.name);
-    const destPath = path.join(dest, entry.name);
-
-    if (entry.isDirectory()) {
-      await copyDirectory(srcPath, destPath);
-    } else {
-      await mkdir(path.dirname(destPath), { recursive: true });
-      const content = await readFile(srcPath);
-      await writeFile(destPath, content);
-    }
-  }
-}
-
-export async function materializeFlutterProject({
-  project,
-  templateRoot,
-  outputRoot,
-  iconArchive,
-}: {
-  project: StudioProject;
-  templateRoot: string;
-  outputRoot: string;
-  iconArchive?: Buffer;
-}) {
-  assertSafeProject(project);
-
-  // Copy template to output directory
-  await copyDirectory(templateRoot, outputRoot);
-
-  return customizeFlutterProject({ project, outputRoot, iconArchive });
+  return { outputRoot, iconAssetsInstalled: icons.installed, templateSource, sourceAdjustments };
 }
 
 export async function materializeFlutterProjectFromGit({
@@ -420,10 +381,9 @@ export async function zipDirectory(root: string) {
   const zip = new JSZip();
   for (const absolute of await walk(root)) {
     const info = await stat(absolute);
-    if (info.size > 15_000_000) continue;
     const relative = path.relative(root, absolute).replaceAll(path.sep, "/");
-    if (relative.startsWith("build/") || relative.startsWith(".dart_tool/")) continue;
-    zip.file(relative, await readFile(absolute));
+    if (/^(?:build|\.git|\.dart_tool|android\/\.gradle)\//.test(relative) || /\.(?:jks|keystore|p12)$/i.test(relative) || /^(?:android\/)?(?:key|local)\.properties$/.test(relative)) continue;
+    zip.file(relative, await readFile(absolute), { unixPermissions: relative.endsWith("/gradlew") ? 0o755 : info.mode });
   }
-  return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 6 } });
+  return zip.generateAsync({ type: "nodebuffer", platform: "UNIX", compression: "DEFLATE", compressionOptions: { level: 6 } });
 }

@@ -3,7 +3,11 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+  outputFileTracingExcludes: {
+    "*": ["./templates/**/*", "./signing/**/*", "./data/**/*", "./tests/**/*", "./reference/**/*", "./public/projects/**/*"],
+  },
   experimental: {
+    cpus: 2,
     serverActions: {
       bodySizeLimit: "10mb",
     },

@@ -19,10 +19,16 @@ const serverSchema = z.object({
   GIT_BIN: z.string().min(1).default("git"),
   GIT_CLONE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
   SIGNING_KEYSTORE_PATH: z.string().default("./signing/application-key.jks"),
+  SIGNING_KEY_ALIAS: z.string().optional(),
+  SIGNING_STORE_PASSWORD: z.string().optional(),
+  SIGNING_KEY_PASSWORD: z.string().optional(),
+  GRADLE_JVM_ARGS: z.string().optional(),
   BUILD_WORKSPACE_ROOT: z.string().default("./data/workspaces"),
   BUILD_ARTIFACT_ROOT: z.string().default("./data/artifacts"),
   BUILD_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(2000),
-  BUILD_TIMEOUT_MS: z.coerce.number().int().positive().default(1_200_000),
+  BUILD_TIMEOUT_MS: z.coerce.number().int().positive().default(3_600_000),
+  BUILD_MIN_HOST_AVAILABLE_MB: z.coerce.number().int().nonnegative().default(0),
+  BUILD_CRITICAL_HOST_AVAILABLE_MB: z.coerce.number().int().nonnegative().default(0),
   FLUTTER_BIN: z.string().default("flutter"),
 });
 

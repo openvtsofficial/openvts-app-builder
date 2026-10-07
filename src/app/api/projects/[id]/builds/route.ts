@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiError, errorResponse, requireOwnedProject, requireUserId } from "@/lib/api";
+import { errorResponse, requireOwnedProject, requireUserId } from "@/lib/api";
 import { prisma } from "@/lib/db";
 import { env } from "@/lib/env";
 
@@ -22,7 +22,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const project = await requireOwnedProject(id, ownerId);
     const { type } = requestSchema.parse(await request.json());
     const build = await prisma.$transaction(async (tx) => {
-      const job = await tx.buildJob.create({ data: { projectId: id, requestedById: ownerId, type, projectRevision: project.configurationRevision, currentStage: "Waiting for an isolated Flutter runner", etaSeconds: type === "SOURCE_ZIP" ? 30 : 300 } });
+      const job = await tx.buildJob.create({ data: { projectId: id, requestedById: ownerId, type, projectRevision: project.configurationRevision, currentStage: "Waiting for an isolated Flutter runner", etaSeconds: type === "SOURCE_ZIP" ? 30 : null } });
       await tx.project.update({ where: { id }, data: { status: "BUILDING" } });
       await tx.auditLog.create({ data: { actorId: ownerId, projectId: id, action: "build.requested", entityType: "BuildJob", entityId: job.id, metadata: { type, templateVersion: project.templateVersion, templateRepository: env.FLUTTER_TEMPLATE_REPOSITORY, templateBranch: env.FLUTTER_TEMPLATE_BRANCH } } });
       return job;
