@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { requireOwnedProject, requireUserId, errorResponse } from "@/lib/api";
 import { env, isDemoMode } from "@/lib/env";
-import { materializeFlutterProject, zipDirectory } from "@/lib/flutter-template";
+import { materializeFlutterProjectFromGit, zipDirectory } from "@/lib/flutter-template";
 import type { StudioProject } from "@/lib/types";
 import { projectSchema, slugify } from "@/lib/validation";
 import { storage } from "@/lib/storage";
@@ -38,7 +38,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const iconBuffer = icons instanceof File ? Buffer.from(await icons.arrayBuffer()) : persisted?.iconArchiveKey ? await storage.get(persisted.iconArchiveKey) : undefined;
     temporary = await mkdtemp(path.join(os.tmpdir(), "openvts-source-"));
     const outputRoot = path.join(temporary, project.slug);
-    await materializeFlutterProject({ project, templateRoot: path.resolve(env.FLUTTER_TEMPLATE_ROOT), outputRoot, iconArchive: iconBuffer });
+    await materializeFlutterProjectFromGit({
+      project,
+      repository: env.FLUTTER_TEMPLATE_REPOSITORY,
+      branch: env.FLUTTER_TEMPLATE_BRANCH,
+      outputRoot,
+      iconArchive: iconBuffer,
+      gitBin: env.GIT_BIN,
+      cloneTimeoutMs: env.GIT_CLONE_TIMEOUT_MS,
+    });
     const archive = await zipDirectory(outputRoot);
     return new Response(new Uint8Array(archive), { headers: { "Content-Type": "application/zip", "Content-Disposition": `attachment; filename="${project.slug}-flutter-source.zip"`, "Content-Length": String(archive.length), "Cache-Control": "no-store" } });
   } catch (error) { return errorResponse(error); }

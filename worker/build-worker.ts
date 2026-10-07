@@ -8,7 +8,7 @@ import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import type { BuildJob, BuildStatus } from "../src/generated/prisma/client";
 import { prisma } from "../src/lib/db";
 import { env } from "../src/lib/env";
-import { materializeFlutterProject, zipDirectory } from "../src/lib/flutter-template";
+import { materializeFlutterProjectFromGit, zipDirectory } from "../src/lib/flutter-template";
 import { createLogger } from "../src/lib/logger";
 import { toStudioProject } from "../src/lib/project-mapper";
 import { storage } from "../src/lib/storage";
@@ -178,7 +178,7 @@ async function findFirst(root: string, predicate: (name: string) => boolean): Pr
 function propertyEscape(value: string) { return value.replaceAll("\\", "\\\\").replaceAll(":", "\\:").replaceAll("=", "\\="); }
 
 async function configureSigning(workspace: string) {
-  const keystoreSrc = path.join(workspace, "assets", "application-key.jks");
+  const keystoreSrc = path.resolve(env.SIGNING_KEYSTORE_PATH);
   if (!existsSync(keystoreSrc)) return false;
   const destination = path.join(workspace, "android", "app", "release-key.jks");
   await writeFile(destination, await readFile(keystoreSrc), { mode: 0o600 });
@@ -188,7 +188,7 @@ async function configureSigning(workspace: string) {
     `keyAlias=${propertyEscape("open-vts-upload")}`,
     "storeFile=release-key.jks",
   ].join("\n");
-  await writeFile(path.join(workspace, "android", "app", "key.properties"), `${properties}\n`, { mode: 0o600 });
+  await writeFile(path.join(workspace, "android", "key.properties"), `${properties}\n`, { mode: 0o600 });
   return true;
 }
 
@@ -209,9 +209,10 @@ async function buildArtifact(job: BuildJob) {
       kill.on("error", () => resolve());
     });
 
-    // Step 1: Copy and customize the base Flutter project
-    await setProgress(job.id, "PREPARING", 10, "Copying base Flutter project from template", 260);
-    await appendLog(job.id, `Template root: ${path.resolve(env.FLUTTER_TEMPLATE_ROOT)}`);
+    // Step 1: Fetch the latest upstream Flutter project for this build.
+    await setProgress(job.id, "PREPARING", 10, `Fetching latest ${env.FLUTTER_TEMPLATE_BRANCH} Flutter base from Git`, 260);
+    await appendLog(job.id, `Template repository: ${env.FLUTTER_TEMPLATE_REPOSITORY}`);
+    await appendLog(job.id, `Template branch: ${env.FLUTTER_TEMPLATE_BRANCH}`);
     await appendLog(job.id, `Workspace: ${workspace}`);
 
     // Step 2: Apply customizations (package name, app name, icons, logos)
@@ -221,23 +222,27 @@ async function buildArtifact(job: BuildJob) {
     if (projectRecord.logoDarkKey) project.logoDarkUrl = `data:image/png;base64,${(await storage.get(projectRecord.logoDarkKey)).toString("base64")}`;
     const iconArchive = projectRecord.iconArchiveKey ? await storage.get(projectRecord.iconArchiveKey) : undefined;
 
-    const result = await materializeFlutterProject({
+    const result = await materializeFlutterProjectFromGit({
       project,
-      templateRoot: path.resolve(env.FLUTTER_TEMPLATE_ROOT),
+      repository: env.FLUTTER_TEMPLATE_REPOSITORY,
+      branch: env.FLUTTER_TEMPLATE_BRANCH,
       outputRoot: workspace,
       iconArchive,
+      gitBin: env.GIT_BIN,
+      cloneTimeoutMs: env.GIT_CLONE_TIMEOUT_MS,
+      onLog: (line) => appendLog(job.id, `[template] ${line}`),
     });
 
-    await appendLog(job.id, `Project customized: package=${project.androidPackageName}, bundle=${project.iosBundleId}, icons=${result.iconAssetsInstalled}`);
+    await appendLog(job.id, `Project customized from ${result.templateSource?.branch}@${result.templateSource?.commit.slice(0, 12)}: package=${project.androidPackageName}, bundle=${project.iosBundleId}, icons=${result.iconAssetsInstalled}`);
 
-    // Step 3: Configure signing (uses bundled keystore from template)
+    // Step 3: Configure signing (keystore is private builder infrastructure, separate from the public Git template)
     const needsSigning = ["SIGNED_APK", "RELEASE_AAB"].includes(job.type);
     if (needsSigning) {
       await setProgress(job.id, "SIGNING", 32, "Configuring release signing key", 200);
       const configured = await configureSigning(workspace);
-      if (!configured) throw new Error("Bundled signing keystore not found in template");
+      if (!configured) throw new Error(`Signing keystore not found at ${path.resolve(env.SIGNING_KEYSTORE_PATH)}`);
       await appendLog(job.id, `Keystore at: ${path.join(workspace, "android", "app", "release-key.jks")} exists=${existsSync(path.join(workspace, "android", "app", "release-key.jks"))}`);
-      await appendLog(job.id, `Key.properties at: ${path.join(workspace, "android", "app", "key.properties")} exists=${existsSync(path.join(workspace, "android", "app", "key.properties"))}`);
+      await appendLog(job.id, `Key.properties at: ${path.join(workspace, "android", "key.properties")} exists=${existsSync(path.join(workspace, "android", "key.properties"))}`);
       await appendLog(job.id, "Signing key installed");
     }
 
@@ -311,7 +316,8 @@ async function fail(job: BuildJob, error: unknown) {
 
 async function main() {
   log.info(`Starting worker ${workerId}`);
-  log.info(`Template root: ${path.resolve(env.FLUTTER_TEMPLATE_ROOT)}`);
+  log.info(`Template repository: ${env.FLUTTER_TEMPLATE_REPOSITORY}`);
+  log.info(`Template branch: ${env.FLUTTER_TEMPLATE_BRANCH}`);
   log.info(`Workspace root: ${path.resolve(env.BUILD_WORKSPACE_ROOT)}`);
   log.info(`Flutter binary: ${env.FLUTTER_BIN}`);
   log.info(`Poll interval: ${env.BUILD_POLL_INTERVAL_MS}ms`);

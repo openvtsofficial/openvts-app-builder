@@ -1,9 +1,10 @@
-import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
 import { canonicalIconPath, recognizedIconPrefixes } from "@/lib/icon-kitchen";
 import type { StudioProject } from "@/lib/types";
+import { checkoutFlutterTemplate, type GitTemplateSource } from "@/lib/flutter-template-source";
 import { androidPackageRegex, iosBundleRegex } from "@/lib/validation";
 
 const BASE_PACKAGE = "com.openvts.app";
@@ -59,6 +60,7 @@ async function replaceInTextFiles(root: string, project: StudioProject) {
         /PRODUCT_BUNDLE_IDENTIFIER = com\.openvts\.app;/g,
         `PRODUCT_BUNDLE_IDENTIFIER = ${project.iosBundleId};`
       );
+      contents = contents.replaceAll(BASE_APP_LABEL, project.iosApplicationName);
     } else {
       // All other files: replace Android package name
       contents = contents.replaceAll(BASE_PACKAGE, project.androidPackageName);
@@ -106,8 +108,10 @@ async function replaceInTextFiles(root: string, project: StudioProject) {
     contents = contents.replaceAll(BASE_API_URL, project.apiBaseUrl);
 
     // Replace application name references ("OpenVTS" and "Open VTS") with user's app name
-    contents = contents.replaceAll(BASE_APP_NAME, userAppName);
-    contents = contents.replaceAll(BASE_APP_LABEL, userAppName);
+    if (ext !== ".pbxproj") {
+      contents = contents.replaceAll(BASE_APP_NAME, userAppName);
+      contents = contents.replaceAll(BASE_APP_LABEL, userAppName);
+    }
 
     if (contents !== original) {
       await writeFile(file, contents, "utf8");
@@ -205,6 +209,29 @@ export async function installIconKitchenArchive(outputRoot: string, archive?: Bu
   return { installed };
 }
 
+
+async function assertCustomizedProject(outputRoot: string, project: StudioProject) {
+  const checks: Array<{ relative: string; expected: string; label: string }> = [
+    { relative: "android/app/build.gradle.kts", expected: project.androidPackageName, label: "Android package" },
+    { relative: "ios/Runner.xcodeproj/project.pbxproj", expected: project.iosBundleId, label: "iOS bundle identifier" },
+    { relative: "pubspec.yaml", expected: `name: ${pubspecName(project.androidPackageName)}`, label: "Dart package name" },
+    { relative: "lib/core/config/app_config.dart", expected: project.apiBaseUrl, label: "API base URL" },
+  ];
+
+  for (const check of checks) {
+    const absolute = path.join(outputRoot, check.relative);
+    const contents = await readFile(absolute, "utf8").catch(() => undefined);
+    if (!contents || !contents.includes(check.expected)) {
+      throw new Error(`The upstream Flutter template contract changed: ${check.label} could not be applied in ${check.relative}`);
+    }
+  }
+
+  const activity = path.join(outputRoot, "android", "app", "src", "main", "kotlin", ...project.androidPackageName.split("."), "MainActivity.kt");
+  if (!(await stat(activity).catch(() => undefined))?.isFile()) {
+    throw new Error("The upstream Flutter template contract changed: MainActivity.kt could not be relocated to the configured Android package");
+  }
+}
+
 async function configureSigningBuildGradle(outputRoot: string) {
   const gradlePath = path.join(outputRoot, "android", "app", "build.gradle.kts");
   let content = await readFile(gradlePath, "utf8");
@@ -213,7 +240,7 @@ async function configureSigningBuildGradle(outputRoot: string) {
 
   const importAndProperties = `import java.util.Properties
 
-val keystorePropertiesFile = rootProject.file("app/key.properties")
+val keystorePropertiesFile = rootProject.file("key.properties")
 val keystoreProperties = Properties()
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(keystorePropertiesFile.inputStream())
@@ -249,14 +276,18 @@ if (keystorePropertiesFile.exists()) {
   await writeFile(gradlePath, content, "utf8");
 }
 
-export async function materializeFlutterProject({ project, templateRoot, outputRoot, iconArchive }: { project: StudioProject; templateRoot: string; outputRoot: string; iconArchive?: Buffer }) {
+interface CustomizeFlutterProjectOptions {
+  project: StudioProject;
+  outputRoot: string;
+  iconArchive?: Buffer;
+  templateSource?: GitTemplateSource;
+}
+
+export async function customizeFlutterProject({ project, outputRoot, iconArchive, templateSource }: CustomizeFlutterProjectOptions) {
   assertSafeProject(project);
   await mkdir(outputRoot, { recursive: true });
 
-  // Step 1: Copy the entire base project from template
-  await cp(templateRoot, outputRoot, { recursive: true, force: true });
-
-  // Remove build/ directory if it was included in the template
+  // Remove build output if the upstream repository contains local/generated files.
   const buildDir = [outputRoot, "build"].join(path.sep);
   await rm(buildDir, { recursive: true, force: true });
 
@@ -293,11 +324,15 @@ export async function materializeFlutterProject({ project, templateRoot, outputR
   const envPath = path.join(outputRoot, ".env");
   await writeFile(envPath, `# Runtime environment\nAPI_BASE_URL=${project.apiBaseUrl}\n`, "utf8");
 
-  // Step 8: Write manifest for traceability
+  // Step 8: Fail loudly if a future upstream change breaks the customization contract.
+  await assertCustomizedProject(outputRoot, project);
+
+  // Step 9: Write manifest for traceability
   await writeFile(path.join(outputRoot, "studio-manifest.json"), JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     templateVersion: project.templateVersion,
+    templateSource,
     project: {
       name: project.name,
       androidApplicationName: project.androidApplicationName,
@@ -310,7 +345,38 @@ export async function materializeFlutterProject({ project, templateRoot, outputR
     iconAssetsInstalled: icons.installed,
   }, null, 2));
 
-  return { outputRoot, iconAssetsInstalled: icons.installed };
+  return { outputRoot, iconAssetsInstalled: icons.installed, templateSource };
+}
+
+export async function materializeFlutterProjectFromGit({
+  project,
+  repository,
+  branch,
+  outputRoot,
+  iconArchive,
+  gitBin = "git",
+  cloneTimeoutMs = 120_000,
+  onLog,
+}: {
+  project: StudioProject;
+  repository: string;
+  branch: string;
+  outputRoot: string;
+  iconArchive?: Buffer;
+  gitBin?: string;
+  cloneTimeoutMs?: number;
+  onLog?: (line: string) => void | Promise<void>;
+}) {
+  assertSafeProject(project);
+  const templateSource = await checkoutFlutterTemplate({
+    repository,
+    branch,
+    outputRoot,
+    gitBin,
+    timeoutMs: cloneTimeoutMs,
+    onLog,
+  });
+  return customizeFlutterProject({ project, outputRoot, iconArchive, templateSource });
 }
 
 export async function zipDirectory(root: string) {
